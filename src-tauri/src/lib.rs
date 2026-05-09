@@ -751,6 +751,86 @@ async fn resume_hotkey(
         .map_err(|e| e.to_string())
 }
 
+/// Configure the capsule's NSWindow so it overlays other apps' fullscreen
+/// Spaces. Three changes, all needed:
+///   1. Swap the object's class from `NSWindow` to `NSPanel` and OR
+///      `NSWindowStyleMaskNonactivatingPanel` into the style mask. macOS
+///      excludes regular `NSWindow`s from foreign fullscreen Spaces; only
+///      `NSPanel` with the nonactivating style is allowed (this is the same
+///      mechanism Wispr Flow's separate helper bundle uses).
+///   2. OR `NSWindowCollectionBehaviorFullScreenAuxiliary` into the collection
+///      behavior so the panel is allowed to render in fullscreen Spaces.
+///      `CanJoinAllSpaces` alone is not sufficient on macOS Tahoe.
+///   3. Raise the window level to `NSPopUpMenuWindowLevel` (101). Tauri's
+///      `alwaysOnTop` only sets `NSFloatingWindowLevel` (3), which sits below
+///      a fullscreen app's content, so the capsule would be hidden behind it.
+/// All read-modify-write so we don't clobber flags Tauri/tao already set.
+/// Safe because `NSPanel` inherits from `NSWindow` and adds no extra ivars,
+/// so the existing `NSWindow` allocation has the right layout.
+#[cfg(target_os = "macos")]
+fn configure_capsule_collection_behavior(ns_window: *mut std::ffi::c_void) {
+    use std::ffi::c_void;
+    use std::os::raw::c_char;
+
+    #[link(name = "objc", kind = "dylib")]
+    extern "C" {
+        fn sel_registerName(name: *const c_char) -> *mut c_void;
+        fn objc_getClass(name: *const c_char) -> *mut c_void;
+        fn object_setClass(obj: *mut c_void, class: *mut c_void) -> *mut c_void;
+    }
+    extern "C" {
+        fn objc_msgSend();
+    }
+
+    if ns_window.is_null() {
+        return;
+    }
+
+    // NSWindowStyleMaskNonactivatingPanel = 1 << 7
+    const NONACTIVATING_PANEL: u64 = 1 << 7;
+    // NSWindowCollectionBehaviorFullScreenAuxiliary = 1 << 8
+    const FULL_SCREEN_AUXILIARY: u64 = 1 << 8;
+    // NSPopUpMenuWindowLevel — above status bar, below cursor; survives other apps' fullscreen.
+    const POPUP_MENU_LEVEL: i64 = 101;
+
+    unsafe {
+        // Swap the class to NSPanel so the nonactivating-panel style takes effect.
+        let panel_class = objc_getClass(b"NSPanel\0".as_ptr() as *const c_char);
+        if !panel_class.is_null() {
+            object_setClass(ns_window, panel_class);
+        }
+
+        let get_style = sel_registerName(b"styleMask\0".as_ptr() as *const c_char);
+        let set_style = sel_registerName(b"setStyleMask:\0".as_ptr() as *const c_char);
+        let get_collection = sel_registerName(b"collectionBehavior\0".as_ptr() as *const c_char);
+        let set_collection = sel_registerName(b"setCollectionBehavior:\0".as_ptr() as *const c_char);
+        let set_level = sel_registerName(b"setLevel:\0".as_ptr() as *const c_char);
+        if get_style.is_null()
+            || set_style.is_null()
+            || get_collection.is_null()
+            || set_collection.is_null()
+            || set_level.is_null()
+        {
+            return;
+        }
+
+        let get_u64: unsafe extern "C" fn(*mut c_void, *mut c_void) -> u64 =
+            std::mem::transmute(objc_msgSend as *const c_void);
+        let set_u64: unsafe extern "C" fn(*mut c_void, *mut c_void, u64) =
+            std::mem::transmute(objc_msgSend as *const c_void);
+        let set_i64: unsafe extern "C" fn(*mut c_void, *mut c_void, i64) =
+            std::mem::transmute(objc_msgSend as *const c_void);
+
+        let style = get_u64(ns_window, get_style);
+        set_u64(ns_window, set_style, style | NONACTIVATING_PANEL);
+
+        let collection = get_u64(ns_window, get_collection);
+        set_u64(ns_window, set_collection, collection | FULL_SCREEN_AUXILIARY);
+
+        set_i64(ns_window, set_level, POPUP_MENU_LEVEL);
+    }
+}
+
 // ─── Hotkey parsing ───
 
 fn default_shortcut() -> Shortcut {
@@ -1296,6 +1376,29 @@ pub fn run() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
+                }
+            }
+
+            // Make the capsule visible inside other apps' fullscreen Spaces.
+            // Three macOS-specific things have to line up:
+            //   1. `CanJoinAllSpaces` (set by `visibleOnAllWorkspaces` in
+            //      tauri.conf.json) — lets the window join every Space.
+            //   2. `FullScreenAuxiliary` + a window level above
+            //      `NSFloatingWindowLevel` (set in
+            //      `configure_capsule_collection_behavior`) — lets the window
+            //      render above a fullscreen app's content.
+            //   3. App activation policy `.accessory` — `.regular` apps are
+            //      excluded from other apps' fullscreen Spaces by macOS,
+            //      regardless of window flags. Switching to `.accessory`
+            //      models OpenTypeless as a status-bar utility (no Dock icon),
+            //      which is consistent with the tray-driven UX.
+            #[cfg(target_os = "macos")]
+            {
+                let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
+                if let Some(capsule) = app.get_webview_window("capsule") {
+                    if let Ok(ns_window) = capsule.ns_window() {
+                        configure_capsule_collection_behavior(ns_window);
+                    }
                 }
             }
 
