@@ -83,6 +83,19 @@ impl LlmProvider for OpenAiProvider {
             }
         }
 
+        // Gemini 3.x flash-lite has thinking OFF by default, but explicitly opt out so it
+        // never engages — voice-to-text polishing is a low-stakes formatting task, not a
+        // reasoning task, and any thinking budget would only add latency and cost.
+        // Other providers silently ignore the field.
+        if config.model.contains("gemini") {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert(
+                    "reasoning_effort".to_string(),
+                    serde_json::json!("none"),
+                );
+            }
+        }
+
         let response = self
             .client
             .post(format!("{}/chat/completions", config.base_url))
