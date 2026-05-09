@@ -169,6 +169,8 @@ VITE_API_BASE_URL=https://my-server.example.com API_BASE_URL=https://my-server.e
 
 ## Architecture
 
+For deeper repository-local architecture docs, start at [docs/index.md](docs/index.md).
+
 **Data Flow Pipeline:**
 
 ```
