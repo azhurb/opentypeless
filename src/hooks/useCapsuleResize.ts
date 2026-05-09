@@ -50,8 +50,46 @@ export function useCapsuleResize() {
     const windowHeight = size.height + 24
 
     import('@tauri-apps/api/window')
-      .then(async ({ getCurrentWindow, LogicalSize, LogicalPosition, currentMonitor }) => {
+      .then(async ({
+        getCurrentWindow,
+        LogicalSize,
+        LogicalPosition,
+        currentMonitor,
+        monitorFromPoint,
+        primaryMonitor,
+        cursorPosition,
+      }) => {
         const win = getCurrentWindow()
+
+        // Pick the monitor under the cursor so the capsule appears on the
+        // user's active screen on multi-monitor setups. Falls back to the
+        // window's current monitor.
+        async function placeBottomCenterOfActiveMonitor() {
+          let monitor = null
+          try {
+            const cursor = await cursorPosition()
+            // tao's cursorPosition() returns physical coords scaled by the
+            // primary monitor, but monitorFromPoint() checks against
+            // CGDisplayBounds (logical). On Retina they differ by the scale
+            // factor, so we must convert before lookup.
+            const primary = await primaryMonitor().catch(() => null)
+            const scale = primary?.scaleFactor ?? 1
+            monitor = await monitorFromPoint(cursor.x / scale, cursor.y / scale)
+          } catch {
+            /* ignore */
+          }
+          if (!monitor) {
+            monitor = await currentMonitor().catch(() => null)
+          }
+          if (!monitor) return
+          const sw = monitor.size.width / monitor.scaleFactor
+          const sh = monitor.size.height / monitor.scaleFactor
+          const mx = monitor.position.x / monitor.scaleFactor
+          const my = monitor.position.y / monitor.scaleFactor
+          const x = Math.round(mx + sw / 2 - windowWidth / 2)
+          const y = Math.round(my + sh - windowHeight - 80)
+          await win.setPosition(new LogicalPosition(x, y)).catch(() => {})
+        }
 
         // Auto-hide: show window when leaving idle, hide when entering idle
         const becameIdle = prevState.current !== 'idle' && pipelineState === 'idle'
@@ -60,7 +98,9 @@ export function useCapsuleResize() {
 
         if (capsuleAutoHide && !contextMenuOpen && !capsuleExpanded) {
           if (leftIdle) {
-            // Show window when transitioning from idle to active
+            // Reposition first (while still hidden) so it appears on the
+            // monitor where the user is now, not where it last sat.
+            await placeBottomCenterOfActiveMonitor()
             await win.show().catch(() => {})
           } else if (becameIdle && initialized.current) {
             // Hide window when returning to idle (after initial mount)
@@ -77,26 +117,12 @@ export function useCapsuleResize() {
         prevAutoHide.current = capsuleAutoHide
 
         if (!initialized.current) {
-          // First mount: position at bottom-center of screen, then show
+          // First mount: size, position on the cursor's monitor, then show
           await win.setSize(new LogicalSize(windowWidth, windowHeight)).catch(() => {})
-          try {
-            const monitor = await currentMonitor()
-            if (monitor) {
-              const sw = monitor.size.width / monitor.scaleFactor
-              const sh = monitor.size.height / monitor.scaleFactor
-              const x = Math.round(sw / 2 - windowWidth / 2)
-              const y = Math.round(sh - windowHeight - 80)
-              await win.setPosition(new LogicalPosition(x, y)).catch(() => {})
-            }
-            // If auto-hide is on, don't show on first mount (will show when recording starts)
-            if (!capsuleAutoHide) {
-              await win.show().catch(() => {})
-            }
-          } catch {
-            /* ignore – monitor info unavailable */
-            if (!capsuleAutoHide) {
-              await win.show().catch(() => {})
-            }
+          await placeBottomCenterOfActiveMonitor()
+          // If auto-hide is on, don't show on first mount (will show when recording starts)
+          if (!capsuleAutoHide) {
+            await win.show().catch(() => {})
           }
           initialized.current = true
           prevWindowSize.current = { width: windowWidth, height: windowHeight }

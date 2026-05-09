@@ -37,8 +37,10 @@
         "transparent": true,
         "shadow": false,
         "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
         "skipTaskbar": true,
         "visible": false,
+        "backgroundThrottling": "disabled",
         "url": "index.html#capsule"
       }
     ],
