@@ -41,9 +41,15 @@ pub fn is_accessibility_trusted() -> bool {
 pub fn request_accessibility_permission() -> bool {
     #[cfg(target_os = "macos")]
     {
+        // The dictionary key MUST be the real extern CFStringRef constant exported by
+        // HIServices, not a synthesized "kAXTrustedCheckOptionPrompt" string. The
+        // backing string of the constant is "AXTrustedCheckOptionPrompt" (no k);
+        // using a synthesized key makes the framework's lookup return NULL, which
+        // it then dereferences (crash at CFGetTypeID + 152, FAR=0x8).
         #[link(name = "ApplicationServices", kind = "framework")]
         extern "C" {
             fn AXIsProcessTrustedWithOptions(options: *mut std::ffi::c_void) -> u8;
+            static kAXTrustedCheckOptionPrompt: *mut std::ffi::c_void;
         }
         #[link(name = "CoreFoundation", kind = "framework")]
         extern "C" {
@@ -55,42 +61,30 @@ pub fn request_accessibility_permission() -> bool {
                 key_callbacks: *const std::ffi::c_void,
                 value_callbacks: *const std::ffi::c_void,
             ) -> *mut std::ffi::c_void;
-            fn CFStringCreateWithCString(
-                allocator: *mut std::ffi::c_void,
-                c_str: *const i8,
-                encoding: u32,
-            ) -> *mut std::ffi::c_void;
+            fn CFRelease(cf: *mut std::ffi::c_void);
             static kCFTypeDictionaryKeyCallBacks: std::ffi::c_void;
             static kCFTypeDictionaryValueCallBacks: std::ffi::c_void;
-        }
-        // kCFBooleanTrue — we link CoreFoundation and use the known address pattern
-        #[link(name = "CoreFoundation", kind = "framework")]
-        extern "C" {
             static kCFBooleanTrue: *mut std::ffi::c_void;
         }
-        // kCFStringEncodingUTF8 = 0x08000100
-        const K_CF_STRING_ENCODING_UTF8: u32 = 0x08000100;
 
         unsafe {
-            let key = CFStringCreateWithCString(
-                std::ptr::null_mut(),
-                b"kAXTrustedCheckOptionPrompt\0".as_ptr() as *const i8,
-                K_CF_STRING_ENCODING_UTF8,
-            );
-            let value = kCFBooleanTrue;
+            let keys: [*mut std::ffi::c_void; 1] = [kAXTrustedCheckOptionPrompt];
+            let values: [*mut std::ffi::c_void; 1] = [kCFBooleanTrue];
 
             let options = CFDictionaryCreate(
                 std::ptr::null_mut(),
-                &[key] as *const *mut std::ffi::c_void,
-                &[value] as *const *mut std::ffi::c_void,
+                keys.as_ptr(),
+                values.as_ptr(),
                 1,
                 &kCFTypeDictionaryKeyCallBacks as *const std::ffi::c_void,
                 &kCFTypeDictionaryValueCallBacks as *const std::ffi::c_void,
             );
 
-            let trusted = AXIsProcessTrustedWithOptions(options);
-            // options is leaked (trivial — called at most a few times)
-            trusted != 0
+            let trusted = AXIsProcessTrustedWithOptions(options) != 0;
+            if !options.is_null() {
+                CFRelease(options);
+            }
+            trusted
         }
     }
     #[cfg(not(target_os = "macos"))]
