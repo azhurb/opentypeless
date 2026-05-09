@@ -46,6 +46,7 @@ This list is grep-verified from `src-tauri/src/pipeline.rs` and `src-tauri/src/l
 ## Important Invariants
 
 - `output_text()` trims trailing whitespace and appends a single space before typing/pasting into the foreground app, so successive dictations don't glue together. History stores the un-normalized text.
+- When polish + keyboard mode are both on (and Accessibility is granted on macOS), tokens are streamed directly to the foreground app via `output::keyboard::type_stream` as they arrive from the LLM. This bypasses the `output_text()` batch path. Clipboard mode and the no-polish path stay batched. The streaming task respects `abort_flag` — `on_chunk` drops chunks once abort is set. On polish failure with zero chunks typed, the pipeline falls back to batch raw output; on failure with partial output already typed, it surfaces the error and avoids double-typing.
 - `pipeline_lock` serializes `start()` and `stop()`.
 - `abort()` sets the abort flag, drops the audio handle, notifies `stt_done`, clears accumulated text, and forces `Idle`.
 - On macOS, if Cmd+C does not change the clipboard, selected text is ignored — this avoids passing stale clipboard content to the LLM.

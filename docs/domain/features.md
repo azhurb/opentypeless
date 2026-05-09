@@ -72,6 +72,10 @@ Current prompt behavior includes:
 
 A single trailing space is appended to whatever is typed into the foreground app (see [Pipeline](../architecture/pipeline.md)), so successive dictations don't glue together.
 
+When polish and keyboard output mode are both active, polished tokens are streamed directly into the foreground app as they arrive from the LLM (Wispr Flow-style "types as it generates"), instead of waiting for the full response. Clipboard mode stays batched.
+
+For Gemini models (any model name containing `gemini`), the LLM request additionally sets `reasoning_effort: "none"` to keep thinking off — `gemini-flash-lite` already defaults to no thinking, but the explicit opt-out is defensive against any future model where it might engage. Other providers silently ignore this field.
+
 Needs confirmation:
 
 - The website mentions customizing the polish prompt. Current repo evidence shows scene prompt templates can be copied from cloud scene packs, but the core local prompt is compiled in Rust and not directly user-editable in Settings.
