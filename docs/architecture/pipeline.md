@@ -45,6 +45,7 @@ This list is grep-verified from `src-tauri/src/pipeline.rs` and `src-tauri/src/l
 
 ## Important Invariants
 
+- `output_text()` trims trailing whitespace and appends a single space before typing/pasting into the foreground app, so successive dictations don't glue together. History stores the un-normalized text.
 - `pipeline_lock` serializes `start()` and `stop()`.
 - `abort()` sets the abort flag, drops the audio handle, notifies `stt_done`, clears accumulated text, and forces `Idle`.
 - On macOS, if Cmd+C does not change the clipboard, selected text is ignored — this avoids passing stale clipboard content to the LLM.
