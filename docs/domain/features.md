@@ -61,13 +61,16 @@ Repo evidence:
 
 Current prompt behavior includes:
 
-- punctuation cleanup
+- punctuation cleanup, with the polished text required to end with terminal punctuation (`. ? !` or the language equivalent)
+- minimal-edit polishing: small grammar fixes only, no rephrasing, restructuring, or word reordering — the user should still recognize their dictated sentences
 - filler-word removal
 - list and paragraph formatting
 - dictionary term preservation
 - selected-text instruction mode
 - translation to configured target language
 - prompt-injection resistance for transcript and selected text
+
+A single trailing space is appended to whatever is typed into the foreground app (see [Pipeline](../architecture/pipeline.md)), so successive dictations don't glue together.
 
 Needs confirmation:
 

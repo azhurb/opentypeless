@@ -16,6 +16,21 @@ use crate::SessionTokenStore;
 
 // ─── Timing constants ───
 
+/// Normalize text for typing into the foreground app. Trims trailing whitespace and appends a
+/// single space so that successive dictations don't glue together. The polish prompt asks the
+/// LLM to end with terminal punctuation, so the typical typed output is e.g. `"Hello world. "`.
+/// Returns an empty string for empty input.
+fn with_trailing_space(text: &str) -> String {
+    let trimmed = text.trim_end();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(trimmed.len() + 1);
+    out.push_str(trimmed);
+    out.push(' ');
+    out
+}
+
 /// On macOS, verify whether the process has been granted Accessibility (Assistive Access)
 /// permission. enigo uses CGEventPost under the hood, which requires this permission;
 /// without it all synthesised key events are silently dropped by the OS.
@@ -906,8 +921,13 @@ impl PipelineHandle {
             anyhow::bail!("ACCESSIBILITY_REQUIRED");
         }
 
+        // Trailing single space so successive dictations don't glue together
+        // ("hello world" + "goodbye" → "hello world. goodbye." instead of
+        // "hello world.goodbye."). History stores the un-normalized text.
+        let typed = with_trailing_space(text);
+
         let output = output::create_output(mode);
-        output.type_text(text).await?;
+        output.type_text(&typed).await?;
 
         let _ = self.app_handle.emit("pipeline:target_app", app_name);
 
@@ -965,5 +985,41 @@ impl PipelineHandle {
                 .await;
             tracing::debug!("LLM connection pre-warm complete");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_trailing_space;
+
+    #[test]
+    fn appends_single_space_to_normal_text() {
+        assert_eq!(with_trailing_space("Hello world."), "Hello world. ");
+    }
+
+    #[test]
+    fn collapses_existing_trailing_whitespace_to_one_space() {
+        assert_eq!(with_trailing_space("Hello world.  \n\t"), "Hello world. ");
+    }
+
+    #[test]
+    fn empty_input_yields_empty_output() {
+        assert_eq!(with_trailing_space(""), "");
+        assert_eq!(with_trailing_space("   \n"), "");
+    }
+
+    #[test]
+    fn preserves_internal_newlines_in_lists() {
+        let input = "1. Buy milk\n2. Do laundry\n3. Write the code";
+        assert_eq!(
+            with_trailing_space(input),
+            "1. Buy milk\n2. Do laundry\n3. Write the code "
+        );
+    }
+
+    #[test]
+    fn handles_multibyte_terminal_punctuation() {
+        // Japanese full-width period — must not panic and must append a single ASCII space.
+        assert_eq!(with_trailing_space("こんにちは。"), "こんにちは。 ");
     }
 }
