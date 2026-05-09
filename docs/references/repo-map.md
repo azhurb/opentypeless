@@ -1,14 +1,16 @@
 # Repository Map
 
+Where important files live. For module responsibilities see [Architecture overview](../architecture/overview.md).
+
 ## Product And Community Docs
 
-- `README.md` - human-friendly product overview, setup, screenshots, FAQ.
-- `README_*.md` - translated READMEs.
-- `CONTRIBUTING.md` - contribution guidance.
-- `SECURITY.md` - vulnerability reporting.
-- `VISION.md` - project principles and direction.
-- `CLAUDE.md` - concise agent entrypoint.
-- `docs/` - repository-local knowledge base.
+- `README.md` — human-friendly product overview, setup, screenshots, FAQ.
+- `README_*.md` — translated READMEs (rules in [Conventions](conventions.md#translated-readmes)).
+- `CONTRIBUTING.md` — contribution guidance; defers to [`commands.md`](commands.md) for checks.
+- `SECURITY.md` — vulnerability reporting.
+- `VISION.md` — project principles and direction.
+- `CLAUDE.md` — short agent entrypoint. `AGENTS.md` is a symlink to it.
+- `docs/` — repository-local knowledge base ([`docs/index.md`](../index.md) is the map).
 
 ## Frontend
 

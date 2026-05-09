@@ -1,8 +1,10 @@
 # Feature Map
 
-This doc turns public feature descriptions into repo-local product knowledge. It is intentionally practical for humans and coding agents: each feature includes the user-facing promise, repo evidence, and any mismatch that needs confirmation.
+Reconciles public feature descriptions with what the repository actually does. Each entry lists the user-facing promise, the code that backs it, and any mismatch.
 
-Sources: [OpenTypeless website feature page](https://www.opentypeless.com/en/features), `README.md`, and current repo code.
+Related: [Providers](../architecture/providers.md) for STT/LLM IDs, [Pipeline](../architecture/pipeline.md) for runtime behavior, [Cloud Pro mode](cloud-pro.md) for the `cloud` provider, [Voice input](voice-input.md) for prompt rules.
+
+Sources: [OpenTypeless website feature page](https://www.opentypeless.com/en/features), `README.md`, current repo code.
 
 ## Bring Your Own Providers
 
@@ -16,9 +18,9 @@ Repo evidence:
 - LLM provider factory lives in `src-tauri/src/llm/mod.rs`.
 - Connection tests and latency benchmarks live in `src-tauri/src/lib.rs`.
 
-Current repo STT provider labels:
+Current repo STT provider labels (from `src/lib/constants.ts`):
 
-- Deepgram Nova-3
+- Deepgram Nova-3 — present in the dropdown but **not registered in `stt::create_provider`**; selecting it currently falls through to the GLM-ASR default. See [Providers → mismatches](../architecture/providers.md#mismatches-with-the-frontend-list).
 - AssemblyAI
 - GLM-ASR
 - OpenAI Whisper
@@ -43,8 +45,8 @@ Current repo LLM provider labels:
 
 Needs confirmation:
 
-- The website mentions `GLM-4-Voice`; repo code uses `glm-asr` and `glm-asr-2512`.
-- The website mentions Yi and LM Studio; current provider constants do not list them directly. LM Studio may work through a custom OpenAI-compatible base URL, but that is an inference.
+- The website mentions `GLM-4-Voice`; repo code uses `glm-asr` (model `glm-asr-2512`).
+- The website mentions Yi and LM Studio; provider constants do not list them. LM Studio may work through a custom OpenAI-compatible base URL — inference, not verified.
 
 ## AI-Powered Text Polishing
 

@@ -1,70 +1,57 @@
 # Storage
 
-OpenTypeless uses local app data for config, history, dictionary, and window/onboarding state.
+OpenTypeless uses local app data for config, history, dictionary, and window/onboarding state. See [Feature map](../domain/features.md) and [Pipeline](pipeline.md) for how stored values feed user-facing behavior.
 
 Evidence: `src-tauri/src/storage/mod.rs`, `src-tauri/migrations/001_init.sql`, `src/lib/tauri.ts`, `src/App.tsx`.
 
-## Config
-
-Config uses `tauri-plugin-store`.
+## Config (`tauri-plugin-store`)
 
 - File: `settings.json` in the OS app-data directory.
-- Key: `app_config`.
-- Rust type: `storage::AppConfig`.
-- Manager: `ConfigManager`.
+- Keys in that file: `app_config` (Rust `storage::AppConfig`), `window_state`, `onboarding_completed` (set from the frontend).
+- Manager: `ConfigManager` caches the deserialized config in memory and writes updates back to the store.
 
-`ConfigManager` caches deserialized config in memory and writes updated config back to the store.
+### `AppConfig` defaults
 
-Window state is also stored in `settings.json` under `window_state`.
+Verified against `src-tauri/src/storage/mod.rs::Default::default`:
 
-Onboarding completion is stored from the frontend under `onboarding_completed`.
+| Field | Default |
+| --- | --- |
+| `stt_provider` | `glm-asr` |
+| `llm_provider` | `openrouter` |
+| `llm_model` | `google/gemini-2.5-flash` |
+| `polish_enabled` | `true` |
+| `translate_enabled` | `false` |
+| `target_lang` | `en` |
+| `hotkey` | `Alt+/` (macOS) / `Ctrl+/` (other) |
+| `hotkey_mode` | `hold` |
+| `output_mode` | `keyboard` |
+| `close_to_tray` | `true` |
+| `max_recording_seconds` | `30` |
 
-## Config Defaults
+If you add or change a default, update this table in the same PR.
 
-Important defaults visible in `storage::AppConfig` and `src/stores/appStore.ts`:
+## SQLite (`<app_data_dir>/opentypeless.db`)
 
-- STT provider: `glm-asr`.
-- LLM provider: `openrouter`.
-- LLM model: `google/gemini-2.5-flash`.
-- Hotkey: `Alt+/` on macOS, `Ctrl+/` elsewhere.
-- Hotkey mode: `hold`.
-- Output mode: `keyboard`.
-- Polish enabled: `true`.
-- Translation enabled: `false`.
-- Close to tray: `true`.
-- Max recording seconds: `30`.
+Both stores use the same database file via `rusqlite` (bundled). Tables are created at startup with `CREATE TABLE IF NOT EXISTS` directly inside `HistoryStore::new` and `DictionaryStore::new`.
 
-## History
+### History (`HistoryStore`)
 
-History uses SQLite through `rusqlite`.
+Columns currently created by Rust code:
 
-- Database path: `<app_data_dir>/opentypeless.db`.
-- Rust store: `HistoryStore`.
-- Retention: `MAX_HISTORY_ENTRIES` is 5000; older entries are pruned on insert.
+- `id`, `created_at`, `app_name`, `app_type`, `raw_text`, `polished_text`, `language`, `duration_ms`.
 
-Fields used by current Rust structs:
+Retention: `MAX_HISTORY_ENTRIES` is 5000. Older rows are pruned on every insert.
 
-- `id`
-- `created_at`
-- `app_name`
-- `app_type`
-- `raw_text`
-- `polished_text`
-- `language`
-- `duration_ms`
+### Dictionary (`DictionaryStore`)
 
-## Dictionary
+Columns: `id`, `word`, `pronunciation` (optional). Words are loaded before recording and injected into prompt building so custom terms are preserved (see `src-tauri/src/llm/prompt.rs`).
 
-Dictionary uses SQLite through `rusqlite`.
+## `migrations/001_init.sql` is reference-only
 
-- Database path: same `opentypeless.db`.
-- Rust store: `DictionaryStore`.
-- Entries include `id`, `word`, and optional `pronunciation`.
+`src-tauri/migrations/001_init.sql` declares richer schemas (`stt_provider`, `llm_provider`, `usage_count`, `idx_history_created`, `idx_dictionary_word`). Grep confirms the file is not loaded by any runtime code — the runtime always uses the narrower `CREATE TABLE IF NOT EXISTS` blocks above. Treat the SQL file as a future-schema sketch, not as an executed migration.
 
-Dictionary words are loaded before recording and passed into prompt building so custom terms can be preserved.
+If the runtime ever starts executing migrations, this section must be updated.
 
-## Schema Note
+## Needs confirmation
 
-`src-tauri/migrations/001_init.sql` includes extra fields such as `stt_provider`, `llm_provider`, `created_at`, and `usage_count`. The stores also create tables directly with `CREATE TABLE IF NOT EXISTS`.
-
-Needs confirmation: whether migrations are currently executed by runtime code or only retained as schema reference. Initial docs should not assume migration execution until confirmed.
+- Whether the extra columns in `001_init.sql` (`stt_provider`, `llm_provider`, `usage_count`) are planned for a future migration runner, or should be removed from the file to avoid drift.

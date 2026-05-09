@@ -3,37 +3,37 @@
 ## TypeScript
 
 - Strict mode is enabled.
-- Avoid `any`; ESLint enforces this.
-- Use Prettier for files under `src/`.
+- No `any` (ESLint enforces).
+- Prettier formats files under `src/`.
 
 ## Rust
 
-- Use Rust 2021.
-- Run `cargo fmt` and `cargo clippy` for backend changes.
+- Rust 2021.
+- Run `cargo fmt` and `cargo clippy -- -D warnings` for backend changes.
 
 ## Commits And Pull Requests
 
-- Use Conventional Commits: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`.
+- [Conventional Commits](https://www.conventionalcommits.org/): `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`.
 - PR titles are checked by `.github/workflows/pr-title.yml`.
 
 ## Providers
 
-When adding a provider, update Rust provider creation, TypeScript provider unions, connection tests, benchmark match arms, Settings UI, and docs.
+The full add-a-provider checklist lives in [Providers → Adding A Provider](../architecture/providers.md#adding-a-provider). Do not duplicate it here.
 
 ## Pipeline State
 
-Do not change `pipeline:state` behavior without considering tray tooltip and capsule UI behavior.
+`pipeline:state` is consumed by both the tray tooltip and the capsule UI. Consider both when changing state semantics. See [Pipeline → States](../architecture/pipeline.md#states).
 
 ## Translated READMEs
 
-`README_*.md` files are translations of `README.md`.
+`README_*.md` are translations of `README.md`. If `README.md` changes substantively, flag it in the PR. Translations can land in follow-up PRs.
 
-If `README.md` changes substantively, flag it in the PR. Translation updates can land separately.
+"Substantive" is intentionally informal: anything that changes documented behavior, screenshots, supported providers, or installation steps qualifies. Pure typo fixes do not.
 
 ## Typos
 
-`.typos.toml` runs in CI. If a real word triggers it, add it to the allowlist rather than awkwardly rewording.
+`.typos.toml` runs in CI. Add real words that trip it to the allowlist rather than awkwardly rewording.
 
-## Needs confirmation
+## Documentation
 
-- The exact threshold for a "substantive" README change is not defined.
+Behavior or workflow change → matching doc update in the same PR. Triggers and writing rules: [Documentation maintenance](documentation-maintenance.md).

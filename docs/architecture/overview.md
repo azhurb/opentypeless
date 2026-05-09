@@ -1,53 +1,52 @@
 # Architecture Overview
 
-OpenTypeless is a Tauri 2 desktop app for AI voice input. The user starts recording with a global hotkey or tray action, speaks, and the app transcribes, optionally polishes or translates, then outputs text into the foreground app.
+OpenTypeless is a Tauri 2 desktop app. The user starts recording with a global hotkey or tray action, speaks, and the app transcribes, optionally polishes or translates, then outputs text into the foreground app.
 
-Evidence: `README.md`, `src-tauri/tauri.conf.json`, `src-tauri/src/pipeline.rs`, `src/App.tsx`.
+Stack summary lives in [`CLAUDE.md`](../../CLAUDE.md). This page covers boundaries and runtime shape.
 
-## Runtime Shape
-
-- Frontend: React 19, TypeScript, Tailwind 4, Vite, Zustand, i18next.
-- Backend: Rust 2021, Tokio, Tauri 2.
-- Audio capture: `cpal`.
-- Text output: `enigo` for keyboard simulation, `arboard` for clipboard.
-- Local storage: `tauri-plugin-store` for config and `rusqlite` for history/dictionary.
-- HTTP and streaming: `reqwest` and `tokio-tungstenite`.
+Evidence: `src-tauri/tauri.conf.json`, `src-tauri/src/pipeline.rs`, `src/App.tsx`.
 
 ## Main Flow
 
 ```text
-Microphone -> audio capture -> STT provider -> raw transcript -> LLM polish -> keyboard/clipboard output
+microphone → audio capture → STT provider → raw transcript → LLM polish → keyboard / clipboard output
 ```
 
-The central orchestrator is `src-tauri/src/pipeline.rs`. It coordinates recording lifecycle, selected-text capture, provider calls, state events, and output.
+Detail: [Pipeline](pipeline.md). Provider abstractions: [Providers](providers.md). Frontend wiring: [Frontend ↔ Backend](frontend-backend.md).
 
-## Main Boundaries
+## Module Boundaries
 
-- `src/` contains the React frontend.
-- `src-tauri/src/` contains the Rust backend.
-- `src-tauri/src/pipeline.rs` owns the core recording pipeline.
-- `src-tauri/src/stt/` contains STT provider implementations.
-- `src-tauri/src/llm/` contains LLM provider implementations and prompt building.
-- `src-tauri/src/output/` contains keyboard and clipboard output modes.
-- `src-tauri/src/storage/` contains config, history, and dictionary storage.
-- `src/components/Capsule/` contains the floating recording widget.
-- `src/components/Settings/` contains provider and app configuration UI.
+| Path | Responsibility |
+| --- | --- |
+| `src/` | React frontend bundle (main and capsule windows share it). |
+| `src/components/Capsule/` | Floating recording widget. |
+| `src/components/Settings/` | Settings panes and provider configuration UI. |
+| `src/stores/appStore.ts` | App config + UI state (Zustand). |
+| `src/stores/authStore.ts` | Cloud auth and subscription state. |
+| `src-tauri/src/lib.rs` | Tauri setup, command registry, tray, hotkey wiring. |
+| `src-tauri/src/pipeline.rs` | Core recording pipeline (singleton `PipelineHandle`). |
+| `src-tauri/src/stt/` | STT provider implementations and factory. |
+| `src-tauri/src/llm/` | LLM provider implementations and prompt builder. |
+| `src-tauri/src/output/` | Keyboard and clipboard output modes. |
+| `src-tauri/src/storage/` | Config (`tauri-plugin-store`) and SQLite stores. |
+| `src-tauri/src/audio/` | Microphone capture (`cpal`). |
+| `src-tauri/src/app_detector/` | Foreground app detection / classification. |
 
 ## Windows
 
 `src-tauri/tauri.conf.json` defines two windows:
 
-- `main`: settings, history, home, onboarding, account, and upgrade views. It starts hidden.
-- `capsule`: small transparent always-on-top widget loaded from `index.html#capsule`.
+- `main` — settings, history, home, onboarding, account, upgrade. Starts hidden.
+- `capsule` — small transparent always-on-top widget loaded from `index.html#capsule`.
 
-`src/App.tsx` synchronously switches on `window.location.hash` so the same bundle renders either the main app or capsule app.
+`src/App.tsx` switches synchronously on `window.location.hash`, so the same JS bundle renders either app without a race during startup.
 
 ## Inferences
 
-- The app is designed around local-first BYOK operation with optional cloud subscription mode. This is inferred from `README.md`, `storage::AppConfig` defaults, provider code, and auth/store code.
-- The Rust backend is the source of truth for pipeline state and provider execution. This is inferred from Tauri command ownership and the `PipelineHandle` singleton.
+- The app is designed around local-first BYOK with optional cloud subscription mode (inferred from `README.md`, `storage::AppConfig` defaults, provider code, and `authStore`).
+- The Rust backend is the source of truth for pipeline state and provider execution (inferred from Tauri command ownership and the singleton `PipelineHandle`).
 
 ## Needs confirmation
 
-- Long-term architectural layering rules are not formally defined beyond current module boundaries.
-- Linux active-app detection currently falls back to a default context; intended Linux behavior needs maintainer confirmation.
+- No formal layering rules beyond the module boundaries above.
+- Linux foreground-app detection currently falls back to a default context; the intended Linux behavior should be confirmed by a maintainer.

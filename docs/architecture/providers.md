@@ -1,12 +1,14 @@
 # Providers
 
-STT and LLM integrations use trait plus factory patterns in Rust. Provider names are also represented in frontend TypeScript unions.
+STT and LLM integrations use trait + factory patterns in Rust. Provider IDs also appear in the frontend Zustand store. The IDs in `appStore.ts` and the match arms in the Rust factories must stay in sync.
 
-Evidence: `src-tauri/src/stt/mod.rs`, `src-tauri/src/llm/mod.rs`, `src/stores/appStore.ts`, `src/components/Settings/`.
+Used by: [Pipeline](pipeline.md) (calls `create_provider`), [Cloud Pro mode](../domain/cloud-pro.md) (the `cloud` ID), [Feature map](../domain/features.md) (user-facing labels).
+
+Evidence: `src-tauri/src/stt/mod.rs`, `src-tauri/src/llm/mod.rs`, `src/stores/appStore.ts`, `src/lib/constants.ts`, `src/components/Settings/`.
 
 ## STT Providers
 
-The `SttProvider` trait lives in `src-tauri/src/stt/mod.rs`.
+Trait in `src-tauri/src/stt/mod.rs`:
 
 ```rust
 async fn connect(&mut self, config: &SttConfig) -> Result<()>;
@@ -16,23 +18,29 @@ async fn disconnect(&mut self) -> Result<Option<String>>;
 fn name(&self) -> &str;
 ```
 
-Current provider names visible in code:
+`TranscriptEvent` variants: `Partial`, `Final`, `SpeechStarted`, `SpeechEnded`, `Error`. File-based providers can also return final text from `disconnect()`.
+
+### Provider IDs in `create_provider`
+
+Match arms currently registered in `stt::create_provider`:
 
 - `cloud`
-- `deepgram`
 - `assemblyai`
 - `glm-asr`
 - `openai-whisper`
 - `groq-whisper`
 - `siliconflow`
+- `_` (default) → falls back to GLM-ASR.
 
 `glm-asr`, `openai-whisper`, `groq-whisper`, and `siliconflow` share `WhisperCompatProvider` with different endpoints, models, and extra fields.
 
-Streaming providers emit `TranscriptEvent` values: `Partial`, `Final`, `SpeechStarted`, `SpeechEnded`, and `Error`. File-based providers can return final transcript text from `disconnect()`.
+### Mismatches with the frontend list
+
+`src/lib/constants.ts` and `src/stores/appStore.ts` also expose `deepgram` (label `Deepgram Nova-3`). Connection-test, benchmark, and pre-warm code in `src-tauri/src/lib.rs` and `src-tauri/src/pipeline.rs` recognise `deepgram`, but the streaming `create_provider` factory does not — selecting it currently falls through to the GLM-ASR default. **Needs confirmation**: whether this is an in-progress integration or a regression. The frontend list and the factory should match.
 
 ## LLM Providers
 
-The `LlmProvider` trait lives in `src-tauri/src/llm/mod.rs`.
+Trait in `src-tauri/src/llm/mod.rs`:
 
 ```rust
 async fn polish(
@@ -45,35 +53,24 @@ async fn polish(
 fn name(&self) -> &str;
 ```
 
-`OpenAiProvider` handles OpenAI-compatible providers through `base_url` and `model`. `CloudProvider` proxies through the OpenTypeless backend.
+`OpenAiProvider` handles OpenAI-compatible providers via `base_url` + `model`. `CloudProvider` proxies through the OpenTypeless backend.
 
-Current frontend LLM provider names visible in `src/stores/appStore.ts`:
-
-- `zhipu`
-- `deepseek`
-- `siliconflow`
-- `openai`
-- `gemini`
-- `moonshot`
-- `qwen`
-- `groq`
-- `claude`
-- `ollama`
-- `openrouter`
-- `cloud`
+Frontend LLM provider IDs (`src/stores/appStore.ts`): `zhipu`, `deepseek`, `siliconflow`, `openai`, `gemini`, `moonshot`, `qwen`, `groq`, `claude`, `ollama`, `openrouter`, `cloud`.
 
 ## Adding A Provider
 
-When adding a provider, update:
+When adding a provider, update all of:
 
-- Rust provider factory in `src-tauri/src/stt/mod.rs` or `src-tauri/src/llm/mod.rs`.
-- TypeScript provider union in `src/stores/appStore.ts`.
-- Connection test and benchmark logic in `src-tauri/src/lib.rs`.
-- Settings UI under `src/components/Settings/`.
-- Any provider-specific defaults or labels.
-- Relevant docs in this folder.
+- The factory in `src-tauri/src/stt/mod.rs` or `src-tauri/src/llm/mod.rs`.
+- The frontend IDs in `src/stores/appStore.ts` and labels in `src/lib/constants.ts`.
+- Connection-test and benchmark match arms in `src-tauri/src/lib.rs`.
+- Pre-warm endpoints in `src-tauri/src/pipeline.rs::pre_warm`.
+- The Settings UI under `src/components/Settings/`.
+- The relevant docs (this file, [Feature map](../domain/features.md), and [Cloud Pro mode](../domain/cloud-pro.md) if applicable).
+
+This list is the source of truth for the conventions checklist; [`references/conventions.md`](../references/conventions.md) defers to it.
 
 ## Needs confirmation
 
-- There is no documented policy for when a provider should be bespoke versus OpenAI-compatible or Whisper-compatible.
-- Provider reliability, latency, and quota expectations are not documented in repo-local docs yet.
+- No documented policy for when a new provider should be bespoke vs OpenAI-compatible vs Whisper-compatible.
+- Provider reliability, latency, and quota expectations are not tracked in repo-local docs.

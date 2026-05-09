@@ -1,6 +1,6 @@
 # Cloud Pro Mode
 
-OpenTypeless supports optional cloud providers for STT and LLM. BYOK mode remains available without an OpenTypeless account.
+OpenTypeless supports optional cloud providers for STT and LLM. BYOK mode remains available without an OpenTypeless account. The provider IDs `cloud` (STT) and `cloud` (LLM) are registered in [Providers](../architecture/providers.md); this page covers the auth and base-URL specifics.
 
 Evidence: `README.md`, `src-tauri/src/stt/cloud.rs`, `src-tauri/src/llm/cloud.rs`, `src-tauri/src/lib.rs`, `src/lib/auth-client.ts`, `src/stores/authStore.ts`, `src/lib/deep-link.ts`.
 
@@ -35,4 +35,4 @@ Auth callbacks use the `opentypeless://` scheme. `tauri-plugin-single-instance` 
 ## Needs confirmation
 
 - Exact Pro quota, billing, and entitlement rules should be confirmed against the cloud backend and product policy before being treated as canonical.
-- Local docs do not currently define backend API contracts beyond the client calls visible in this repo.
+- The `/api/proxy/stt`, `/api/proxy/llm`, `/api/scenes`, and `/api/subscription/status` contracts are not defined in this repo. A canonical contract doc — owned by whoever maintains the backend — would prevent client/server drift.

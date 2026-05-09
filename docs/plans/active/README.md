@@ -1,13 +1,9 @@
 # Active Plans
 
-Use this folder for checked-in plans that are actively being executed.
+Checked-in plans that are actively being executed. One focused plan per effort; keep them short and updateable.
 
-Plan files should be short, specific, and updateable. Prefer one focused plan per effort.
+Lifecycle: when work lands, move the file to `../completed/` if it is useful history, otherwise delete it.
 
 ## Current Active Plans
 
 None checked in yet.
-
-## Needs confirmation
-
-- Any active plans that currently live outside the repo should be moved here or linked from here.

@@ -2,27 +2,27 @@
 
 ## AppConfig
 
-Rust and TypeScript config shape for user settings such as providers, API keys, hotkey, output mode, theme, and translation.
+Rust + TypeScript config shape for user settings (providers, API keys, hotkey, output mode, theme, translation). Defaults: [Storage → AppConfig defaults](../architecture/storage.md#appconfig-defaults).
 
 ## BYOK
 
-Bring Your Own Key. User configures provider API keys locally and requests go directly to the chosen provider.
+Bring Your Own Key. The user configures provider API keys locally and requests go directly to the chosen provider, not through OpenTypeless servers.
 
 ## Capsule
 
-Small transparent always-on-top window that shows recording, processing, and completion state.
+Small transparent always-on-top window that shows recording, processing, and completion state. See [Frontend ↔ Backend → Two Windows](../architecture/frontend-backend.md#two-windows-one-bundle).
 
 ## Cloud Provider
 
-Special `cloud` STT or LLM provider that proxies through the OpenTypeless backend using a session bearer token.
+Special `cloud` STT or LLM provider that proxies through the OpenTypeless backend using a session bearer token. Detail: [Cloud Pro mode](cloud-pro.md).
 
 ## Dictionary
 
-User-defined terms that are injected into LLM prompt building so exact spellings are preserved.
+User-defined terms injected into the LLM prompt so exact spellings are preserved.
 
 ## Feature Map
 
-Repo-local inventory of user-facing features reconciled against code evidence and public website claims.
+Repo-local inventory of user-facing features reconciled against code evidence and public website claims: [`features.md`](features.md).
 
 ## LLM
 
@@ -30,24 +30,24 @@ Large language model used to polish, format, or translate the raw transcript.
 
 ## Pipeline
 
-Rust orchestration flow from recording through transcription, polishing, output, and history storage.
+Rust orchestration flow from recording through transcription, polishing, output, and history storage. Detail: [Pipeline](../architecture/pipeline.md).
 
 ## Selected-Text Mode
 
-Mode where selected foreground-app text is captured with Cmd/Ctrl+C and passed to the LLM. The voice input is treated as an instruction about that selected text.
+Mode where selected foreground-app text is captured with Cmd/Ctrl+C and passed to the LLM. Voice input becomes an instruction about that selected text.
 
 ## Scene Pack
 
-Cloud-fetched pack containing a description, prompt template, and optional dictionary terms for a workflow.
+Cloud-fetched pack containing a description, prompt template, and optional dictionary terms for a workflow. Fetched from `/api/scenes`.
 
 ## STT
 
-Speech-to-text provider that converts microphone audio into transcript text.
+Speech-to-text provider that converts microphone audio into transcript text. Provider catalogue: [Providers](../architecture/providers.md).
 
 ## Tauri Command
 
-Rust function exposed to the frontend through Tauri `invoke(...)`.
+Rust function exposed to the frontend through Tauri `invoke(...)`. Registry rule: [Frontend ↔ Backend → Tauri Commands](../architecture/frontend-backend.md#tauri-commands).
 
 ## TranscriptEvent
 
-Rust event type from STT providers. Variants include partial transcript, final transcript, speech start/end, and errors.
+Rust event type from STT providers. Variants: `Partial`, `Final`, `SpeechStarted`, `SpeechEnded`, `Error`.

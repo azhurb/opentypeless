@@ -27,20 +27,9 @@ Thanks for your interest in contributing! This guide covers everything you need 
 
 ## Pre-Submit Checklist
 
-Run these checks before opening a PR:
+Run the canonical command list before opening a PR: [`docs/references/commands.md`](docs/references/commands.md). It mirrors `.github/workflows/ci.yml` and is the single source of truth — please don't copy the commands into other docs or PR templates.
 
-```bash
-# Frontend
-npx tsc --noEmit
-npx eslint src/
-npx prettier --check src/
-npx vitest run
-
-# Rust
-cargo fmt --check --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
-```
+Also: if your change touches behavior, providers, commands/events, storage, or workflows described under `docs/`, update the matching doc in the same PR. Trigger list: [`docs/references/documentation-maintenance.md`](docs/references/documentation-maintenance.md). If your change is doc-irrelevant, add `Docs: not affected.` to the PR description so reviewers don't have to guess.
 
 ## Commit Message Format
 
