@@ -1,14 +1,14 @@
 /**
- * Settings 组件测试集
+ * Settings component test suite
  *
- * 覆盖以下范围：
- * 1. Tab 切换 — 点击侧边栏后正确显示对应 Pane 内容
- * 2. 动画结构 — AnimatePresence wrapper 正常渲染
- * 3. appStore.llmModels — 状态提升：初始值、读写、reset
- * 4. LlmPane provider 切换 — 清空 models 缓存
- * 5. LlmPane useEffect skip — 已有缓存时不再触发 debounce fetch
- * 6. DirtyBar — 配置变更后出现，Reset 后消失
- * 7. appStore getInitialState — llmModels 在 reset 后为空数组
+ * Coverage:
+ * 1. Tab switching — clicking sidebar items shows the matching pane
+ * 2. Animation structure — AnimatePresence wrapper renders correctly
+ * 3. appStore.llmModels — state lift: initial value, read/write, reset
+ * 4. LlmPane provider switching — clears the models cache
+ * 5. LlmPane useEffect skip — does not re-fetch when cache is populated
+ * 6. DirtyBar — appears on config change, disappears after Reset
+ * 7. appStore getInitialState — llmModels is an empty array after reset
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -16,13 +16,15 @@ import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-libra
 import React from 'react'
 import { useAppStore } from '../../../stores/appStore'
 
-// 每个测试后清理 DOM，防止多次 render 的节点积累导致 getByText 找到多个元素
+// Clean up the DOM after each test so repeated render() calls don't leave
+// duplicate nodes that confuse getByText.
 afterEach(() => {
   cleanup()
 })
 
 // ─── Mock framer-motion ───────────────────────────────────────────────────────
-// 过滤掉所有 framer-motion 专有 prop，避免 React DOM 警告和 getByText 多元素问题
+// Strip framer-motion-only props so React doesn't warn about unknown DOM
+// attributes and getByText doesn't match duplicates.
 const MOTION_PROPS = new Set([
   'initial',
   'animate',
@@ -117,10 +119,10 @@ function renderSettings() {
   return render(<Settings />)
 }
 
-// 侧边栏导航按钮：精确匹配 sidebar 内的 <button data-motion="button"> 子元素
+// Sidebar nav button: matches the <button data-motion="button"> child inside
+// the sidebar, excluding the title-bar button which contains an <h2>.
 function clickSidebarItem(label: string) {
   const spans = screen.getAllByText(label)
-  // sidebar button 的直接父链中有 data-motion="button"，且该 button 不含 h2
   const sidebarSpan = spans.find((el) => {
     const btn = el.closest('[data-motion="button"]')
     return btn !== null && btn.querySelector('h2') === null
@@ -131,54 +133,51 @@ function clickSidebarItem(label: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. Tab 切换 — 渲染正确 Pane 内容
+// 1. Tab switching — renders the matching pane
 // ─────────────────────────────────────────────────────────────────────────────
-describe('Settings tab 切换', () => {
+describe('Settings tab switching', () => {
   beforeEach(() => {
     resetStore()
     seedSavedConfig()
   })
 
-  it('初始渲染显示 General pane（含 hotkey section）', () => {
+  it('initial render shows the General pane (with hotkey section)', () => {
     renderSettings()
-    // General pane 包含 "settings.hotkey" section 标题
     expect(screen.getByText('settings.hotkey')).toBeDefined()
   })
 
-  it('点击 Speech Recognition 后显示 STT provider 字段', () => {
+  it('shows STT provider fields after clicking Speech Recognition', () => {
     renderSettings()
     clickSidebarItem('settings.speechRecognition')
     expect(screen.getByText('settings.provider')).toBeDefined()
-    // STT pane 含语言选择
     expect(screen.getByText('settings.sttLanguage')).toBeDefined()
   })
 
-  it('点击 AI Polish 后显示 LLM provider 字段', () => {
+  it('shows LLM provider fields after clicking AI Polish', () => {
     renderSettings()
     clickSidebarItem('settings.aiPolish')
-    // LLM pane 也含 provider，但还含 enableAiPolish toggle
     expect(screen.getByText('settings.enableAiPolish')).toBeDefined()
   })
 
-  it('点击 Dictionary 后显示词典输入框 placeholder', () => {
+  it('shows the dictionary input placeholder after clicking Dictionary', () => {
     renderSettings()
     clickSidebarItem('settings.dictionary')
     expect(screen.getByPlaceholderText('dictionary.word')).toBeDefined()
   })
 
-  it('点击 Scenes 后显示登录提示（user=null）', () => {
+  it('shows the sign-in prompt after clicking Scenes (user=null)', () => {
     renderSettings()
     clickSidebarItem('settings.scenes')
     expect(screen.getByText('scenes.signInToBrowse')).toBeDefined()
   })
 
-  it('点击 About 后显示版本信息区域', () => {
+  it('shows the version info section after clicking About', () => {
     renderSettings()
     clickSidebarItem('settings.about')
     expect(screen.getByText('settings.openSource')).toBeDefined()
   })
 
-  it('可以在多个 tab 之间来回切换', () => {
+  it('can switch back and forth between multiple tabs', () => {
     renderSettings()
     clickSidebarItem('settings.aiPolish')
     expect(screen.getByText('settings.enableAiPolish')).toBeDefined()
@@ -187,71 +186,69 @@ describe('Settings tab 切换', () => {
     expect(screen.getByText('settings.hotkey')).toBeDefined()
   })
 
-  it('切换 tab 后 title bar 更新', () => {
+  it('updates the title bar after switching tabs', () => {
     renderSettings()
     clickSidebarItem('settings.dictionary')
-    // title bar 中的 h2 应该显示 settings.dictionary
     const titles = screen.getAllByText('settings.dictionary')
-    // 至少出现两次：sidebar nav 和 title bar h2
+    // At least twice: sidebar nav and title bar h2.
     expect(titles.length).toBeGreaterThanOrEqual(2)
   })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. 动画结构 — AnimatePresence wrapper 正常渲染
+// 2. Animation structure — AnimatePresence wrapper renders correctly
 // ─────────────────────────────────────────────────────────────────────────────
-describe('Settings 动画结构', () => {
+describe('Settings animation structure', () => {
   beforeEach(() => {
     resetStore()
     seedSavedConfig()
   })
 
-  it('motion wrapper 正常渲染 pane 内容', () => {
+  it('motion wrapper renders pane content', () => {
     const { container } = renderSettings()
-    // 我们的 mock 给 motion 元素打上 data-motion 属性
+    // Our mock tags motion elements with a data-motion attribute.
     expect(container.querySelector('[data-motion]')).not.toBeNull()
   })
 
-  it('切换 tab 后 pane 内容正常更新（无卡死）', () => {
+  it('updates pane content after switching tabs (no freeze)', () => {
     renderSettings()
     clickSidebarItem('settings.speechRecognition')
-    // 仅断言组件没有崩溃，DOM 还在
     expect(document.body).toBeDefined()
   })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. appStore.llmModels — store 层测试
+// 3. appStore.llmModels — store-layer tests
 // ─────────────────────────────────────────────────────────────────────────────
 describe('appStore.llmModels', () => {
   beforeEach(() => {
     resetStore()
   })
 
-  it('初始值为空数组', () => {
+  it('initial value is an empty array', () => {
     expect(useAppStore.getState().llmModels).toEqual([])
   })
 
-  it('setLlmModels 正确更新 store', () => {
+  it('setLlmModels updates the store', () => {
     useAppStore.getState().setLlmModels(['model-a', 'model-b'])
     expect(useAppStore.getState().llmModels).toEqual(['model-a', 'model-b'])
   })
 
-  it('setLlmModels([]) 可以清空缓存', () => {
+  it('setLlmModels([]) clears the cache', () => {
     useAppStore.getState().setLlmModels(['model-a'])
     useAppStore.getState().setLlmModels([])
     expect(useAppStore.getState().llmModels).toHaveLength(0)
   })
 
-  it('store 中的 llmModels 不随组件卸载而丢失', () => {
+  it('llmModels is preserved across component unmount', () => {
     useAppStore.getState().setLlmModels(['gpt-4o', 'claude-3'])
-    // 模拟"切走再切回"：zustand store 不依赖组件生命周期
+    // Simulate "navigate away and back": zustand state outlives components.
     const { unmount } = render(<div />)
     unmount()
     expect(useAppStore.getState().llmModels).toEqual(['gpt-4o', 'claude-3'])
   })
 
-  it('setLlmModels 替换而不是合并', () => {
+  it('setLlmModels replaces rather than merges', () => {
     useAppStore.getState().setLlmModels(['a', 'b', 'c'])
     useAppStore.getState().setLlmModels(['x'])
     expect(useAppStore.getState().llmModels).toEqual(['x'])
@@ -259,21 +256,21 @@ describe('appStore.llmModels', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. LlmPane — provider 切换时清空 models 缓存
+// 4. LlmPane — clears models cache when the provider changes
 // ─────────────────────────────────────────────────────────────────────────────
-describe('LlmPane provider 切换清空 models', () => {
+describe('LlmPane provider switch clears models', () => {
   beforeEach(() => {
     resetStore()
     seedSavedConfig()
   })
 
-  it('切换 provider 时 store 中的 llmModels 被清空', async () => {
+  it('clears llmModels when provider changes', async () => {
     useAppStore.getState().setLlmModels(['model-x', 'model-y'])
 
     renderSettings()
     clickSidebarItem('settings.aiPolish')
 
-    // provider select 是当前 pane 中的第一个 combobox
+    // Provider select is the first combobox in the current pane.
     const selects = screen.getAllByRole('combobox')
     const providerSelect = selects[0]
 
@@ -286,9 +283,9 @@ describe('LlmPane provider 切换清空 models', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. LlmPane useEffect — 已有缓存时不重复 fetch
+// 5. LlmPane useEffect — skips fetch when cache is populated
 // ─────────────────────────────────────────────────────────────────────────────
-describe('LlmPane models 缓存：已有缓存时跳过 fetch', () => {
+describe('LlmPane models cache: skip fetch when populated', () => {
   beforeEach(() => {
     resetStore()
     seedSavedConfig()
@@ -300,7 +297,7 @@ describe('LlmPane models 缓存：已有缓存时跳过 fetch', () => {
     vi.clearAllMocks()
   })
 
-  it('llmModels 已有内容时不触发 fetchLlmModels', async () => {
+  it('does not call fetchLlmModels when llmModels already has entries', async () => {
     const { fetchLlmModels } = await import('../../../lib/tauri')
     const mockFetch = vi.mocked(fetchLlmModels)
     mockFetch.mockClear()
@@ -322,7 +319,7 @@ describe('LlmPane models 缓存：已有缓存时跳过 fetch', () => {
     expect(mockFetch).not.toHaveBeenCalled()
   })
 
-  it('llmModels 为空且有 api key/url 时触发 fetchLlmModels', async () => {
+  it('calls fetchLlmModels when llmModels is empty and api key/url are set', async () => {
     const { fetchLlmModels } = await import('../../../lib/tauri')
     const mockFetch = vi.mocked(fetchLlmModels)
     mockFetch.mockClear()
@@ -337,7 +334,7 @@ describe('LlmPane models 缓存：已有缓存时跳过 fetch', () => {
     renderSettings()
     clickSidebarItem('settings.aiPolish')
 
-    // runAllTimersAsync 同时推进 fake timer 并 flush 所有 pending microtasks/promises
+    // runAllTimersAsync advances fake timers and flushes pending microtasks.
     await act(async () => {
       await vi.runAllTimersAsync()
     })
@@ -345,7 +342,7 @@ describe('LlmPane models 缓存：已有缓存时跳过 fetch', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 
-  it('fetchLlmModels 完成后 store 中 llmModels 被更新', async () => {
+  it('updates llmModels in the store after fetchLlmModels resolves', async () => {
     const { fetchLlmModels } = await import('../../../lib/tauri')
     vi.mocked(fetchLlmModels).mockResolvedValue(['gpt-4o', 'gpt-3.5-turbo'])
 
@@ -368,20 +365,20 @@ describe('LlmPane models 缓存：已有缓存时跳过 fetch', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. DirtyBar — 配置变更后出现，Reset 后消失
+// 6. DirtyBar — appears on config change, disappears after Reset
 // ─────────────────────────────────────────────────────────────────────────────
-describe('DirtyBar 行为', () => {
+describe('DirtyBar behavior', () => {
   beforeEach(() => {
     resetStore()
     seedSavedConfig()
   })
 
-  it('初始状态下 DirtyBar 不显示', () => {
+  it('is hidden in the initial state', () => {
     renderSettings()
     expect(screen.queryByText('Unsaved changes')).toBeNull()
   })
 
-  it('修改 config 后 DirtyBar 出现', async () => {
+  it('appears after config is modified', async () => {
     renderSettings()
     act(() => {
       useAppStore.getState().updateConfig({ theme: 'dark' })
@@ -391,7 +388,7 @@ describe('DirtyBar 行为', () => {
     })
   })
 
-  it('点击 Reset 后 DirtyBar 消失', async () => {
+  it('disappears after clicking Reset', async () => {
     renderSettings()
     act(() => {
       useAppStore.getState().updateConfig({ theme: 'dark' })
@@ -407,7 +404,7 @@ describe('DirtyBar 行为', () => {
     })
   })
 
-  it('DirtyBar 显示 Save 和 Reset 两个按钮', async () => {
+  it('shows both Save and Reset buttons', async () => {
     renderSettings()
     act(() => {
       useAppStore.getState().updateConfig({ theme: 'dark' })
@@ -420,21 +417,21 @@ describe('DirtyBar 行为', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. appStore getInitialState — llmModels 包含在初始状态中
+// 7. appStore getInitialState — llmModels is part of the initial state
 // ─────────────────────────────────────────────────────────────────────────────
-describe('appStore getInitialState 包含 llmModels', () => {
-  it('getInitialState().llmModels 为空数组', () => {
+describe('appStore getInitialState includes llmModels', () => {
+  it('getInitialState().llmModels is an empty array', () => {
     const initial = useAppStore.getInitialState()
     expect(initial.llmModels).toEqual([])
   })
 
-  it('setState(getInitialState()) 后 llmModels 恢复为空', () => {
+  it('setState(getInitialState()) restores llmModels to empty', () => {
     useAppStore.getState().setLlmModels(['stale-model'])
     useAppStore.setState(useAppStore.getInitialState())
     expect(useAppStore.getState().llmModels).toEqual([])
   })
 
-  it('getInitialState 不改变 llmModels 以外的字段', () => {
+  it('getInitialState does not change fields other than llmModels', () => {
     const initial = useAppStore.getInitialState()
     expect(initial.config.hotkey).toBe('Ctrl+/')
     expect(initial.pipelineState).toBe('idle')
