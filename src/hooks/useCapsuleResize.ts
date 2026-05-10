@@ -24,7 +24,7 @@ function getSizeForState(
     case 'polishing':
       return { width: 220, height: 36 }
     case 'outputting':
-      return { width: 120, height: 36 }
+      return { width: 36, height: 36 }
     default:
       return { width: 36, height: 36 }
   }

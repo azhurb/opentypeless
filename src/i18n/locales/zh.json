@@ -72,9 +72,7 @@
   "capsule": {
     "cancelRecording": "取消录音",
     "cancelProcessing": "取消处理",
-    "thinking": "思考中...",
     "cancelPolishing": "取消润色",
-    "done": "完成",
     "errorOccurred": "发生错误",
     "openMainWindow": "打开主窗口",
     "settings": "设置",

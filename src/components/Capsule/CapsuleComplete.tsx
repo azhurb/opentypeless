@@ -4,6 +4,8 @@ import { useEffect } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { spring } from '../../lib/animations'
 
+const COMPLETE_DURATION_MS = 400
+
 export function CapsuleComplete() {
   const resetRecording = useAppStore((s) => s.resetRecording)
   const setPipelineState = useAppStore((s) => s.setPipelineState)
@@ -12,12 +14,12 @@ export function CapsuleComplete() {
     const timer = setTimeout(() => {
       resetRecording()
       setPipelineState('idle')
-    }, 1200)
+    }, COMPLETE_DURATION_MS)
     return () => clearTimeout(timer)
   }, [resetRecording, setPipelineState])
 
   return (
-    <motion.div className="relative z-10 flex items-center gap-1.5 h-9 px-3">
+    <motion.div className="relative z-10 flex items-center justify-center h-9 px-3">
       <motion.div
         initial={{ scale: 0, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -25,7 +27,6 @@ export function CapsuleComplete() {
       >
         <Check size={14} className="text-white" />
       </motion.div>
-      <span className="text-[11px] text-white font-medium">Done</span>
     </motion.div>
   )
 }

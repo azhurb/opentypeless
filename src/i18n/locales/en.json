@@ -72,9 +72,7 @@
   "capsule": {
     "cancelRecording": "Cancel recording",
     "cancelProcessing": "Cancel processing",
-    "thinking": "Thinking...",
     "cancelPolishing": "Cancel polishing",
-    "done": "Done",
     "errorOccurred": "An error occurred",
     "openMainWindow": "Open Main Window",
     "settings": "Settings",
