@@ -32,7 +32,7 @@ export function CapsulePolishing() {
           />
         ))}
       </div>
-      <p className="text-[11px] text-white leading-snug truncate flex-1 min-w-0">Thinking...</p>
+      <div className="flex-1" />
       <button
         onClick={handleCancel}
         aria-label="Cancel polishing"
