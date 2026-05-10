@@ -60,7 +60,6 @@ export interface AppConfig {
   theme: Theme
   auto_start: boolean
   close_to_tray: boolean
-  start_minimized: boolean
   max_recording_seconds: number
   ui_language: string
   capsule_auto_hide: boolean
@@ -172,7 +171,6 @@ const defaultConfig: AppConfig = {
   theme: 'system',
   auto_start: false,
   close_to_tray: true,
-  start_minimized: false,
   max_recording_seconds: 30,
   ui_language: 'en',
   capsule_auto_hide: false,

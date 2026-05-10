@@ -277,13 +277,6 @@ export function GeneralPane() {
             onChange={(checked) => updateConfig({ auto_start: checked })}
             label={t('settings.launchAtStartup')}
           />
-          {config.auto_start && (
-            <Toggle
-              checked={config.start_minimized}
-              onChange={(checked) => updateConfig({ start_minimized: checked })}
-              label={t('settings.startMinimized')}
-            />
-          )}
           <Toggle
             checked={config.capsule_auto_hide}
             onChange={(checked) => updateConfig({ capsule_auto_hide: checked })}
