@@ -19,7 +19,6 @@
   <a href="https://github.com/azhurb/opentypeless/releases"><img src="https://img.shields.io/github/v/release/azhurb/opentypeless?color=2ABBA7" alt="Release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/azhurb/opentypeless" alt="License" /></a>
   <a href="https://github.com/azhurb/opentypeless/stargazers"><img src="https://img.shields.io/github/stars/azhurb/opentypeless?style=social" alt="Stars" /></a>
-  <a href="https://discord.gg/V6rRpJ4RGD"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
 <p align="center">
@@ -92,6 +91,25 @@ Download the latest version for your platform:
 | macOS (Apple Silicon) | `.dmg` |
 | macOS (Intel) | `.dmg` |
 | Linux | `.AppImage` / `.deb` |
+
+## Installation
+
+### macOS
+
+Builds are signed with a self-signed certificate (not a paid Apple Developer ID), so macOS quarantines them on download. On first install, strip the quarantine attribute:
+
+1. Open the `.dmg` and drag **OpenTypeless** into `/Applications`.
+2. In Terminal, run:
+   ```bash
+   xattr -cr /Applications/OpenTypeless.app
+   ```
+3. Launch the app. Grant **Microphone** and **Accessibility** permissions when prompted.
+
+When upgrading to a new release, repeat step 2 (each download gets a fresh quarantine flag). Accessibility and Microphone grants persist across upgrades — no need to re-grant.
+
+### Windows and Linux
+
+Open the installer / AppImage / `.deb` and follow the standard install prompts.
 
 ## Prerequisites
 
@@ -178,8 +196,6 @@ Yes. Bring your own provider API keys.
 
 ## Community
 
-- 💬 [Discord](https://discord.gg/V6rRpJ4RGD) — Chat, get help, share feedback
-- 🗣️ [GitHub Discussions](https://github.com/azhurb/opentypeless/discussions) — Feature proposals, Q&A
 - 🐛 [Issue Tracker](https://github.com/azhurb/opentypeless/issues) — Bug reports and feature requests
 - 📖 [Contributing Guide](CONTRIBUTING.md) — Development setup and guidelines
 - 🔒 [Security Policy](SECURITY.md) — Report vulnerabilities responsibly
