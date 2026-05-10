@@ -90,6 +90,7 @@ interface AppState {
 
   // Config
   config: AppConfig
+  configLoaded: boolean
   setConfig: (config: AppConfig) => void
   updateConfig: (partial: Partial<AppConfig>) => void
 
@@ -196,7 +197,8 @@ export const useAppStore = create<AppState>((set) => ({
   setTargetApp: (targetApp) => set({ targetApp }),
 
   config: defaultConfig,
-  setConfig: (config) => set({ config }),
+  configLoaded: false,
+  setConfig: (config) => set({ config, configLoaded: true }),
   updateConfig: (partial) => set((s) => ({ config: { ...s.config, ...partial } })),
 
   history: [],
