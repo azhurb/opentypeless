@@ -70,9 +70,43 @@ jobs:
 
       - run: npm ci
 
+      - name: Import macOS code-signing certificate
+        if: startsWith(matrix.platform, 'macos') && env.MACOS_CERT_P12_BASE64 != ''
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain-db"
+          KEYCHAIN_PASS="$(openssl rand -hex 24)"
+          CERT_PATH="${RUNNER_TEMP}/cert.p12"
+
+          security create-keychain -p "${KEYCHAIN_PASS}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASS}" "${KEYCHAIN_PATH}"
+
+          printf '%s' "${MACOS_CERT_P12_BASE64}" | base64 --decode > "${CERT_PATH}"
+          security import "${CERT_PATH}" \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${MACOS_CERT_P12_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -A
+          rm -f "${CERT_PATH}"
+
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASS}" "${KEYCHAIN_PATH}" >/dev/null
+
+          IDENTITY=$(security find-identity "${KEYCHAIN_PATH}" | awk '/"OpenTypeless Release"/ { print $2; exit }')
+          if [[ -z "${IDENTITY}" ]]; then
+            echo "::error::Imported certificate but could not locate signing identity in keychain"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=${IDENTITY}" >> "${GITHUB_ENV}"
+          echo "Imported signing identity: ${IDENTITY}"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: 'OpenTypeless ${{ github.event.inputs.tag || github.ref_name }}'
