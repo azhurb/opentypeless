@@ -6,7 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## Fork
 
-This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entries below describe the upstream `0.1.0` release; the fork's first change is the removal of cloud / account / subscription / telemetry surfaces in favor of a BYOK-only build.
+This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
+
+## [0.2.0] - 2026-05-10
+
+First fork release. Cuts cloud / account / subscription / telemetry surfaces and ships substantive UX and reliability work on top of upstream `0.1.0`.
+
+### Added
+- Streaming keyboard output — LLM tokens are typed as they arrive instead of after the full response
+- Live mic volume drives the capsule waveform bars during recording
+- Indeterminate progress bar in the capsule replaces the "Transcribing…" placeholder
+- macOS install steps in the README; signed macOS release builds via a stable self-signed certificate
+
+### Changed
+- BYOK-only build: cloud account, subscription, and telemetry surfaces removed; no auto-update
+- Tightened LLM polish prompt; typed output ends with a trailing space
+- Always start in the tray; the `start_minimized` setting was dropped
+- Capsule trims post-recording stage chrome and stays at polishing width to avoid a mid-exit clip
+- Capsule respects `capsule_auto_hide` on fresh launch and asserts hidden on first mount
+- README translations removed; remaining Chinese test comments translated
+- Discord references removed from documentation
+
+### Fixed
+- macOS capsule overlay now behaves correctly across hide, multi-monitor, and fullscreen Spaces
+- macOS accessibility permission prompt no longer crashes (uses the real `kAXTrustedCheckOptionPrompt` constant)
 
 ## [0.1.0] - 2026-02-26
 
