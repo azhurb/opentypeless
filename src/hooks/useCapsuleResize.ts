@@ -132,8 +132,14 @@ export function useCapsuleResize() {
             // First mount: size, position on the cursor's monitor, then show
             await win.setSize(new LogicalSize(windowWidth, windowHeight)).catch(() => {})
             await placeBottomCenterOfActiveMonitor()
-            // If auto-hide is on, don't show on first mount (will show when recording starts)
-            if (!capsuleAutoHide) {
+            if (capsuleAutoHide) {
+              // Belt-and-braces: tauri.conf.json marks the capsule
+              // `visible: false`, but on macOS the setSize/setPosition calls
+              // above can briefly surface the window before any show() call.
+              // Re-asserting hidden here is a no-op when the OS already kept
+              // it hidden, and pulls it back when it didn't.
+              await win.hide().catch(() => {})
+            } else {
               await win.show().catch(() => {})
             }
             initialized.current = true
