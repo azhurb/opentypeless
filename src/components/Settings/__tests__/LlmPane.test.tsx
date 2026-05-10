@@ -27,10 +27,6 @@ vi.mock('react-i18next', () => ({
         'settings.selectedTextContext': 'Selected Text Context',
         'settings.selectedTextContextDesc': 'Include selected text as context',
         'settings.targetLanguage': 'Target Language',
-        'settings.cloudLlmPro': 'Cloud LLM (Pro)',
-        'settings.llmSignInHint': 'Sign in to use cloud LLM',
-        'settings.llmUpgradeHint': 'Upgrade to Pro to use cloud LLM',
-        'settings.llmProActive': 'Cloud LLM active',
       }
       return translations[key] || key
     },
@@ -58,26 +54,12 @@ const mockAppStore = {
   setLlmModels: vi.fn(),
 }
 
-const mockAuthStore = {
-  user: null as any,
-  plan: null as any,
-}
-
 vi.mock('../../../stores/appStore', () => ({
   useAppStore: (selector: any) => {
     if (typeof selector === 'function') {
       return selector(mockAppStore)
     }
     return mockAppStore
-  },
-}))
-
-vi.mock('../../../stores/authStore', () => ({
-  useAuthStore: (selector: any) => {
-    if (typeof selector === 'function') {
-      return selector(mockAuthStore)
-    }
-    return mockAuthStore
   },
 }))
 
@@ -97,8 +79,6 @@ describe('LlmPane', () => {
     mockAppStore.llmTestStatus = 'idle'
     mockAppStore.llmLatencyMs = null
     mockAppStore.llmModels = []
-    mockAuthStore.user = null
-    mockAuthStore.plan = null
   })
 
   afterEach(() => {
@@ -125,32 +105,6 @@ describe('LlmPane', () => {
       expect(mockAppStore.setLlmTestStatus).toHaveBeenCalledWith('idle')
       expect(mockAppStore.setLlmLatencyMs).toHaveBeenCalledWith(null)
       expect(mockAppStore.setLlmModels).toHaveBeenCalledWith([])
-    })
-  })
-
-  describe('Cloud provider UI', () => {
-    it('shows cloud info when provider is cloud and user not signed in', () => {
-      mockAppStore.config.llm_provider = 'cloud'
-      render(<LlmPane />)
-      expect(screen.getByText('Sign in to use cloud LLM')).toBeInTheDocument()
-    })
-
-    it('shows upgrade hint when user is signed in but not pro', () => {
-      mockAppStore.config.llm_provider = 'cloud'
-      mockAuthStore.user = { id: '1', email: 'test@example.com' }
-      mockAuthStore.plan = 'free'
-
-      render(<LlmPane />)
-      expect(screen.getByText('Upgrade to Pro to use cloud LLM')).toBeInTheDocument()
-    })
-
-    it('shows active status when user is pro', () => {
-      mockAppStore.config.llm_provider = 'cloud'
-      mockAuthStore.user = { id: '1', email: 'test@example.com' }
-      mockAuthStore.plan = 'pro'
-
-      render(<LlmPane />)
-      expect(screen.getByText('Cloud LLM active')).toBeInTheDocument()
     })
   })
 

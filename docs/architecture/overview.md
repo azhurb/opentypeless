@@ -22,7 +22,6 @@ Detail: [Pipeline](pipeline.md). Provider abstractions: [Providers](providers.md
 | `src/components/Capsule/` | Floating recording widget. |
 | `src/components/Settings/` | Settings panes and provider configuration UI. |
 | `src/stores/appStore.ts` | App config + UI state (Zustand). |
-| `src/stores/authStore.ts` | Cloud auth and subscription state. |
 | `src-tauri/src/lib.rs` | Tauri setup, command registry, tray, hotkey wiring. |
 | `src-tauri/src/pipeline.rs` | Core recording pipeline (singleton `PipelineHandle`). |
 | `src-tauri/src/stt/` | STT provider implementations and factory. |
@@ -36,7 +35,7 @@ Detail: [Pipeline](pipeline.md). Provider abstractions: [Providers](providers.md
 
 `src-tauri/tauri.conf.json` defines two windows:
 
-- `main` — settings, history, home, onboarding, account, upgrade. Starts hidden.
+- `main` — settings, history, home, onboarding. Starts hidden.
 - `capsule` — small transparent always-on-top widget loaded from `index.html#capsule`.
 
 `src/App.tsx` switches synchronously on `window.location.hash`, so the same JS bundle renders either app without a race during startup.
@@ -45,7 +44,7 @@ On macOS the app runs as a status-bar utility: `lib.rs` sets the activation poli
 
 ## Inferences
 
-- The app is designed around local-first BYOK with optional cloud subscription mode (inferred from `README.md`, `storage::AppConfig` defaults, provider code, and `authStore`).
+- The app is local-first BYOK only — no cloud account, subscription, telemetry, or auto-update. All STT/LLM calls go directly from the user's machine to the provider they configured.
 - The Rust backend is the source of truth for pipeline state and provider execution (inferred from Tauri command ownership and the singleton `PipelineHandle`).
 
 ## Needs confirmation

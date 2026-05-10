@@ -2,9 +2,9 @@
 
 Reconciles public feature descriptions with what the repository actually does. Each entry lists the user-facing promise, the code that backs it, and any mismatch.
 
-Related: [Providers](../architecture/providers.md) for STT/LLM IDs, [Pipeline](../architecture/pipeline.md) for runtime behavior, [Cloud Pro mode](cloud-pro.md) for the `cloud` provider, [Voice input](voice-input.md) for prompt rules.
+Related: [Providers](../architecture/providers.md) for STT/LLM IDs, [Pipeline](../architecture/pipeline.md) for runtime behavior, [Voice input](voice-input.md) for prompt rules.
 
-Sources: [OpenTypeless website feature page](https://www.opentypeless.com/en/features), `README.md`, current repo code.
+Sources: `README.md`, current repo code. This fork is BYOK-only; the upstream cloud subscription, account/auth flow, and scene packs have been removed.
 
 ## Bring Your Own Providers
 
@@ -26,7 +26,6 @@ Current repo STT provider labels (from `src/lib/constants.ts`):
 - OpenAI Whisper
 - Groq Whisper
 - SiliconFlow
-- OpenTypeless Cloud
 
 Current repo LLM provider labels:
 
@@ -41,7 +40,6 @@ Current repo LLM provider labels:
 - Claude
 - Ollama
 - OpenRouter
-- OpenTypeless Cloud
 
 Needs confirmation:
 
@@ -78,7 +76,7 @@ For Gemini models (any model name containing `gemini`), the LLM request addition
 
 Needs confirmation:
 
-- The website mentions customizing the polish prompt. Current repo evidence shows scene prompt templates can be copied from cloud scene packs, but the core local prompt is compiled in Rust and not directly user-editable in Settings.
+- The core polish prompt is compiled in Rust and not directly user-editable in Settings.
 
 ## Language Support And Auto Detection
 
@@ -127,7 +125,6 @@ Repo evidence:
 - Dictionary UI lives under `src/components/Settings/DictionaryPane.tsx`.
 - Dictionary words are loaded before recording in `src-tauri/src/pipeline.rs`.
 - Prompt construction injects sanitized dictionary terms in `src-tauri/src/llm/prompt.rs`.
-- Scene packs can merge dictionary terms into the local dictionary.
 
 Needs confirmation:
 
@@ -135,60 +132,22 @@ Needs confirmation:
 
 ## Privacy And Local-First BYOK
 
-User-facing promise: in BYOK mode, API keys stay local and provider requests go directly to the selected provider rather than through OpenTypeless servers.
+User-facing promise: API keys stay local and provider requests go directly to the selected provider. There are no OpenTypeless servers in the loop.
 
 Repo evidence:
 
-- `README.md` states BYOK requests go directly to configured providers.
 - API keys are stored in `settings.json` through `tauri-plugin-store`.
-- Non-cloud STT/LLM providers call external provider endpoints directly from Rust.
-- Cloud providers use OpenTypeless proxy endpoints with a session token.
-
-Needs confirmation:
-
-- The website says keys are stored in an encrypted configuration file. Current repo evidence only confirms `tauri-plugin-store` local storage; encryption is not proven by the inspected code.
-
-## Optional Cloud Pro Mode
-
-User-facing promise: users can select `cloud` providers to avoid managing provider API keys.
-
-Repo evidence:
-
-- `cloud` is present in STT and LLM provider lists.
-- `SessionTokenStore` stores the bearer token after frontend auth.
-- Connection tests check `/api/subscription/status` and require `plan == "pro"`.
-- Cloud STT and LLM providers proxy through `{API_BASE_URL}/api/proxy/stt` and `{API_BASE_URL}/api/proxy/llm`.
-- Build-time base URL overrides are `VITE_API_BASE_URL` and `API_BASE_URL`.
-
-Needs confirmation:
-
-- Exact quota and billing rules should be confirmed against backend/product policy.
+- All STT/LLM providers call external provider endpoints directly from Rust.
+- There is no auth, subscription, telemetry, or auto-update code in the build.
 
 ## Offline And Local Models
 
-User-facing promise: some configurations can run without OpenTypeless cloud dependency, and local LLM use is supported through Ollama.
+User-facing promise: local LLM use is supported through Ollama. With a local STT provider plus a local LLM, the app can run fully offline.
 
 Repo evidence:
 
 - Ollama is listed as an LLM provider with `http://localhost:11434/v1`.
-- BYOK mode does not require OpenTypeless cloud.
-- README says local STT plus local LLM can work offline.
 
 Needs confirmation:
 
 - The current repo does not expose a clearly named local STT provider. Local Whisper support may depend on OpenAI-compatible endpoints or external setup not documented here.
-
-## Scene Packs
-
-User-facing promise from repo UI: scene packs provide prompt templates and dictionary terms for specific workflows.
-
-Repo evidence:
-
-- Settings includes a Scenes pane.
-- Scenes are fetched from `/api/scenes`.
-- Scene packs include `name`, `description`, `category`, `promptTemplate`, `dictionaryTerms`, and `isPro`.
-- Users can copy prompt templates and merge scene dictionary terms.
-
-Needs confirmation:
-
-- How copied scene prompts are meant to alter polishing behavior is not wired into local prompt configuration in the inspected code.

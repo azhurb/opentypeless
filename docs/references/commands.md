@@ -24,12 +24,6 @@ npm run tauri build
 
 Output: `src-tauri/target/release/bundle/`.
 
-Override the cloud backend at build time:
-
-```bash
-VITE_API_BASE_URL=https://my.example.com API_BASE_URL=https://my.example.com npm run tauri build
-```
-
 ## Frontend Checks (mirrors `check-frontend` in CI)
 
 ```bash

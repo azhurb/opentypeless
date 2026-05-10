@@ -2,7 +2,7 @@
 
 STT and LLM integrations use trait + factory patterns in Rust. Provider IDs also appear in the frontend Zustand store. The IDs in `appStore.ts` and the match arms in the Rust factories must stay in sync.
 
-Used by: [Pipeline](pipeline.md) (calls `create_provider`), [Cloud Pro mode](../domain/cloud-pro.md) (the `cloud` ID), [Feature map](../domain/features.md) (user-facing labels).
+Used by: [Pipeline](pipeline.md) (calls `create_provider`), [Feature map](../domain/features.md) (user-facing labels).
 
 Evidence: `src-tauri/src/stt/mod.rs`, `src-tauri/src/llm/mod.rs`, `src/stores/appStore.ts`, `src/lib/constants.ts`, `src/components/Settings/`.
 
@@ -24,7 +24,6 @@ fn name(&self) -> &str;
 
 Match arms currently registered in `stt::create_provider`:
 
-- `cloud`
 - `assemblyai`
 - `glm-asr`
 - `openai-whisper`
@@ -53,9 +52,9 @@ async fn polish(
 fn name(&self) -> &str;
 ```
 
-`OpenAiProvider` handles OpenAI-compatible providers via `base_url` + `model`. `CloudProvider` proxies through the OpenTypeless backend.
+`OpenAiProvider` handles OpenAI-compatible providers via `base_url` + `model`. All registered LLM providers go through it.
 
-Frontend LLM provider IDs (`src/stores/appStore.ts`): `zhipu`, `deepseek`, `siliconflow`, `openai`, `gemini`, `moonshot`, `qwen`, `groq`, `claude`, `ollama`, `openrouter`, `cloud`.
+Frontend LLM provider IDs (`src/stores/appStore.ts`): `zhipu`, `deepseek`, `siliconflow`, `openai`, `gemini`, `moonshot`, `qwen`, `groq`, `claude`, `ollama`, `openrouter`.
 
 ## Adding A Provider
 
@@ -66,7 +65,7 @@ When adding a provider, update all of:
 - Connection-test and benchmark match arms in `src-tauri/src/lib.rs`.
 - Pre-warm endpoints in `src-tauri/src/pipeline.rs::pre_warm`.
 - The Settings UI under `src/components/Settings/`.
-- The relevant docs (this file, [Feature map](../domain/features.md), and [Cloud Pro mode](../domain/cloud-pro.md) if applicable).
+- The relevant docs (this file and [Feature map](../domain/features.md)).
 
 This list is the source of truth for the conventions checklist; [`references/conventions.md`](../references/conventions.md) defers to it.
 

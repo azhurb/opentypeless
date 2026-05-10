@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## Fork
+
+This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entries below describe the upstream `0.1.0` release; the fork's first change is the removal of cloud / account / subscription / telemetry surfaces in favor of a BYOK-only build.
+
 ## [0.1.0] - 2026-02-26
 
 ### Added
@@ -23,7 +27,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Onboarding wizard for first-time setup
 - System tray with quick actions (show/hide, start recording, quit)
 - Auto-start on login
-- Optional Cloud (Pro) subscription for managed STT/LLM quota
-- BYOK (Bring Your Own Key) mode — fully functional without any cloud dependency
+- BYOK (Bring Your Own Key) only — no cloud account, subscription, telemetry, or auto-update
 - Cross-platform support: Windows, macOS, Linux
 - CI/CD with automated builds for all three platforms

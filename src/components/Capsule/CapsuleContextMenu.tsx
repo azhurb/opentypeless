@@ -1,4 +1,4 @@
-import { Settings, History, LogOut, CircleUser, Crown, AppWindow } from 'lucide-react'
+import { Settings, History, LogOut, AppWindow } from 'lucide-react'
 
 interface Props {
   onClose: () => void
@@ -43,22 +43,6 @@ export function CapsuleContextMenu({ onClose }: Props) {
       label: 'History',
       onClick: () => {
         openMainWindow('#/history')
-        onClose()
-      },
-    },
-    {
-      icon: CircleUser,
-      label: 'Account',
-      onClick: () => {
-        openMainWindow('#/account')
-        onClose()
-      },
-    },
-    {
-      icon: Crown,
-      label: 'Upgrade',
-      onClick: () => {
-        openMainWindow('#/upgrade')
         onClose()
       },
     },

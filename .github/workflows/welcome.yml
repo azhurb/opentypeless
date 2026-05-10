@@ -22,12 +22,12 @@ jobs:
 
             We'll take a look as soon as possible. In the meantime:
             - Make sure you've filled out the template completely
-            - Check [existing issues](https://github.com/tover0314-w/opentypeless/issues) for duplicates
+            - Check [existing issues](https://github.com/azhurb/opentypeless/issues) for duplicates
             - Join our [Discord](https://discord.gg/V6rRpJ4RGD) if you need quick help
           pr-message: |
             Thanks for your first pull request! 🎉
 
             A maintainer will review it soon. While you wait:
             - Make sure CI checks pass
-            - Check the [contributing guide](https://github.com/tover0314-w/opentypeless/blob/main/CONTRIBUTING.md)
+            - Check the [contributing guide](https://github.com/azhurb/opentypeless/blob/main/CONTRIBUTING.md)
             - Join our [Discord](https://discord.gg/V6rRpJ4RGD) to chat with the team

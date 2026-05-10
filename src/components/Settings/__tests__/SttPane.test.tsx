@@ -19,10 +19,6 @@ vi.mock('react-i18next', () => ({
         'settings.connectionFailed': 'Connection failed',
         'settings.storedLocally': 'Stored locally',
         'settings.sttLanguage': 'STT Language',
-        'settings.cloudSttPro': 'Cloud STT (Pro)',
-        'settings.sttSignInHint': 'Sign in to use cloud STT',
-        'settings.sttUpgradeHint': 'Upgrade to Pro to use cloud STT',
-        'settings.sttProActive': 'Cloud STT active',
       }
       return translations[key] || key
     },
@@ -43,26 +39,12 @@ const mockAppStore = {
   setSttLatencyMs: vi.fn(),
 }
 
-const mockAuthStore = {
-  user: null as any,
-  plan: null as any,
-}
-
 vi.mock('../../../stores/appStore', () => ({
   useAppStore: (selector: any) => {
     if (typeof selector === 'function') {
       return selector(mockAppStore)
     }
     return mockAppStore
-  },
-}))
-
-vi.mock('../../../stores/authStore', () => ({
-  useAuthStore: (selector: any) => {
-    if (typeof selector === 'function') {
-      return selector(mockAuthStore)
-    }
-    return mockAuthStore
   },
 }))
 
@@ -76,8 +58,6 @@ describe('SttPane', () => {
     }
     mockAppStore.sttTestStatus = 'idle'
     mockAppStore.sttLatencyMs = null
-    mockAuthStore.user = null
-    mockAuthStore.plan = null
 
     // Clear all mock function calls
     vi.clearAllMocks()
@@ -106,40 +86,6 @@ describe('SttPane', () => {
       expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ stt_provider: 'assemblyai' })
       expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
       expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
-    })
-  })
-
-  describe('Cloud provider UI', () => {
-    it('shows cloud info when provider is cloud and user not signed in', () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      render(<SttPane />)
-      expect(screen.getByText('Sign in to use cloud STT')).toBeInTheDocument()
-    })
-
-    it('shows upgrade hint when user is signed in but not pro', () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      mockAuthStore.user = { id: '1', email: 'test@example.com' }
-      mockAuthStore.plan = 'free'
-
-      render(<SttPane />)
-      expect(screen.getByText('Upgrade to Pro to use cloud STT')).toBeInTheDocument()
-    })
-
-    it('shows active status when user is pro', () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      mockAuthStore.user = { id: '1', email: 'test@example.com' }
-      mockAuthStore.plan = 'pro'
-
-      render(<SttPane />)
-      expect(screen.getByText('Cloud STT active')).toBeInTheDocument()
-    })
-
-    it('hides API key input when provider is cloud', () => {
-      mockAppStore.config.stt_provider = 'cloud'
-
-      const { container } = render(<SttPane />)
-      const inputs = container.querySelectorAll('input[placeholder="Enter API Key"]')
-      expect(inputs.length).toBe(0)
     })
   })
 

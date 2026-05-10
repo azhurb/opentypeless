@@ -20,10 +20,7 @@ Where important files live. For module responsibilities see [Architecture overvi
 - `src/components/Settings/` - settings panes and provider configuration UI.
 - `src/hooks/` - React hooks for theme, Tauri events, recording, capsule resize.
 - `src/lib/tauri.ts` - TypeScript wrappers for Rust Tauri commands.
-- `src/lib/deep-link.ts` - deep-link handling.
-- `src/lib/auth-client.ts` - Better Auth client.
 - `src/stores/appStore.ts` - app state and config types.
-- `src/stores/authStore.ts` - auth and subscription state.
 - `src/i18n/` - localization setup and strings.
 
 ## Backend

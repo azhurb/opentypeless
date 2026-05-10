@@ -1,4 +1,3 @@
-pub mod cloud;
 pub mod openai;
 pub mod prompt;
 
@@ -68,13 +67,11 @@ pub trait LlmProvider: Send + Sync {
 }
 
 pub fn create_provider(
-    provider_name: &str,
+    _provider_name: &str,
     client: Option<reqwest::Client>,
 ) -> Box<dyn LlmProvider> {
-    match (provider_name, client) {
-        ("cloud", Some(c)) => Box::new(cloud::CloudLlmProvider::with_client(c)),
-        ("cloud", None) => Box::new(cloud::CloudLlmProvider::new()),
-        (_, Some(c)) => Box::new(openai::OpenAiProvider::with_client(c)),
-        (_, None) => Box::new(openai::OpenAiProvider::new()),
+    match client {
+        Some(c) => Box::new(openai::OpenAiProvider::with_client(c)),
+        None => Box::new(openai::OpenAiProvider::new()),
     }
 }

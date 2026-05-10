@@ -15,10 +15,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/tover0314-w/opentypeless/actions/workflows/ci.yml"><img src="https://github.com/tover0314-w/opentypeless/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/tover0314-w/opentypeless/releases"><img src="https://img.shields.io/github/v/release/tover0314-w/opentypeless?color=2ABBA7" alt="Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/tover0314-w/opentypeless" alt="License" /></a>
-  <a href="https://github.com/tover0314-w/opentypeless/stargazers"><img src="https://img.shields.io/github/stars/tover0314-w/opentypeless?style=social" alt="Stars" /></a>
+  <a href="https://github.com/azhurb/opentypeless/actions/workflows/ci.yml"><img src="https://github.com/azhurb/opentypeless/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/azhurb/opentypeless/releases"><img src="https://img.shields.io/github/v/release/azhurb/opentypeless?color=2ABBA7" alt="Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/azhurb/opentypeless" alt="License" /></a>
+  <a href="https://github.com/azhurb/opentypeless/stargazers"><img src="https://img.shields.io/github/stars/azhurb/opentypeless?style=social" alt="Stars" /></a>
   <a href="https://discord.gg/V6rRpJ4RGD"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
@@ -84,7 +84,7 @@
 
 Download the latest version for your platform:
 
-**[Download from Releases](https://github.com/tover0314-w/opentypeless/releases)**
+**[Download from Releases](https://github.com/azhurb/opentypeless/releases)**
 
 | Platform | File |
 |----------|------|
@@ -122,46 +122,8 @@ All settings are accessible from the in-app Settings panel:
 - **AI Polish** — choose LLM provider, model, and API key
 - **General** — hotkey, output mode, theme, auto-start
 - **Dictionary** — add custom terms for better transcription accuracy
-- **Scenes** — prompt templates for different use cases
 
-API keys are stored locally via `tauri-plugin-store`. No keys are sent to OpenTypeless servers — all STT/LLM requests go directly to the provider you configure.
-
-### Cloud (Pro) Option
-
-OpenTypeless also offers an optional Pro subscription that provides managed STT and LLM quota so you don't need your own API keys. This is entirely optional — the app is fully functional with your own keys.
-
-[Learn more about Pro](https://www.opentypeless.com)
-
-### BYOK (Bring Your Own Key) vs Cloud
-
-| | BYOK Mode | Cloud (Pro) Mode |
-|---|---|---|
-| STT | Your own API key (Deepgram, AssemblyAI, etc.) | Managed quota (10h/month) |
-| LLM | Your own API key (OpenAI, DeepSeek, etc.) | Managed quota (~5M tokens/month) |
-| Cloud dependency | None — all requests go directly to your provider | Requires connection to www.opentypeless.com |
-| Cost | Pay your provider directly | $4.99/month subscription |
-
-All core features — recording, transcription, AI polish, keyboard/clipboard output, dictionary, history — work entirely offline from OpenTypeless servers in BYOK mode.
-
-### Self-Hosting / No Cloud
-
-To run OpenTypeless without any cloud dependency:
-
-1. Choose any non-Cloud STT and LLM provider in Settings
-2. Enter your own API keys
-3. That's it — no account or internet connection to www.opentypeless.com is needed
-
-If you want to point the optional cloud features at your own backend, set these environment variables before building:
-
-| Variable | Default | Description |
-|---|---|---|
-| `VITE_API_BASE_URL` | `https://www.opentypeless.com` | Frontend cloud API base URL |
-| `API_BASE_URL` | `https://www.opentypeless.com` | Rust backend cloud API base URL |
-
-```bash
-# Example: build with a custom backend
-VITE_API_BASE_URL=https://my-server.example.com API_BASE_URL=https://my-server.example.com npm run tauri build
-```
+API keys are stored locally via `tauri-plugin-store`. All STT/LLM requests go directly from your machine to the provider you configure. There is no cloud account, subscription, telemetry, or auto-update — this fork is BYOK-only.
 
 ## Architecture
 
@@ -182,8 +144,8 @@ src/                  # React frontend (TypeScript)
 
 src-tauri/src/        # Rust backend
 ├── audio/            # Audio capture via cpal
-├── stt/              # STT providers (Deepgram, AssemblyAI, Whisper-compat, Cloud)
-├── llm/              # LLM providers (OpenAI-compat, Cloud)
+├── stt/              # STT providers (Deepgram, AssemblyAI, Whisper-compat)
+├── llm/              # LLM providers (OpenAI-compatible)
 ├── output/           # Text output (keyboard simulation, clipboard paste)
 ├── storage/          # Config (tauri-plugin-store) + history/dictionary (SQLite)
 ├── app_detector/     # Detect active application for context
@@ -203,7 +165,7 @@ src-tauri/src/        # Rust backend
 ## FAQ
 
 **Is my audio sent to the cloud?**
-In BYOK mode, audio goes directly to your chosen STT provider (e.g., Groq, Deepgram). Nothing passes through OpenTypeless servers. In Cloud (Pro) mode, audio is sent to our managed proxy for transcription.
+Audio goes directly to whichever STT provider you configure (e.g., Groq, Deepgram). No data is routed through OpenTypeless servers — there is no telemetry or background reporting in this fork.
 
 **Can I use it offline?**
 With a local STT provider (Whisper via Ollama) and a local LLM (Ollama), the app works entirely offline. No internet connection needed.
@@ -212,13 +174,13 @@ With a local STT provider (Whisper via Ollama) and a local LLM (Ollama), the app
 STT supports 99+ languages depending on the provider. AI polish and translation support 20+ target languages.
 
 **Is the app free?**
-Yes. The app is fully functional with your own API keys (BYOK). The Cloud Pro subscription ($4.99/month) is optional.
+Yes. Bring your own provider API keys.
 
 ## Community
 
 - 💬 [Discord](https://discord.gg/V6rRpJ4RGD) — Chat, get help, share feedback
-- 🗣️ [GitHub Discussions](https://github.com/tover0314-w/opentypeless/discussions) — Feature proposals, Q&A
-- 🐛 [Issue Tracker](https://github.com/tover0314-w/opentypeless/issues) — Bug reports and feature requests
+- 🗣️ [GitHub Discussions](https://github.com/azhurb/opentypeless/discussions) — Feature proposals, Q&A
+- 🐛 [Issue Tracker](https://github.com/azhurb/opentypeless/issues) — Bug reports and feature requests
 - 📖 [Contributing Guide](CONTRIBUTING.md) — Development setup and guidelines
 - 🔒 [Security Policy](SECURITY.md) — Report vulnerabilities responsibly
 - 🧭 [Vision](VISION.md) — Project principles and roadmap direction
@@ -227,15 +189,15 @@ Yes. The app is fully functional with your own API keys (BYOK). The Cloud Pro su
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
-Looking for a place to start? Check out issues labeled [`good first issue`](https://github.com/tover0314-w/opentypeless/labels/good%20first%20issue).
+Looking for a place to start? Check out issues labeled [`good first issue`](https://github.com/azhurb/opentypeless/labels/good%20first%20issue).
 
 ## Star History
 
-<a href="https://star-history.com/#tover0314-w/opentypeless&Date">
+<a href="https://star-history.com/#azhurb/opentypeless&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tover0314-w/opentypeless&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tover0314-w/opentypeless&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=tover0314-w/opentypeless&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=azhurb/opentypeless&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=azhurb/opentypeless&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=azhurb/opentypeless&type=Date" />
   </picture>
 </a>
 
@@ -243,6 +205,10 @@ Looking for a place to start? Check out issues labeled [`good first issue`](http
 
 This entire project was built in a single day using [Claude Code](https://claude.com/claude-code) — from architecture design to full implementation, including the Tauri backend, React frontend, CI/CD pipeline, and this README.
 
+## Credits
+
+This is a personal fork of the original [OpenTypeless](https://github.com/tover0314-w/opentypeless) by [Tover0314](https://github.com/tover0314-w), who built the initial app. This fork strips the cloud / subscription / account features and keeps only the local BYOK pipeline. All credit for the original architecture and implementation goes to the upstream author; subsequent changes here are mine.
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — see the upstream copyright notice in [LICENSE](LICENSE).

@@ -3,18 +3,20 @@ import i18n from './i18n'
 import { useTauriEvents } from './hooks/useTauriEvents'
 import { useTheme } from './hooks/useTheme'
 import { useAppStore } from './stores/appStore'
-import { useAuthStore } from './stores/authStore'
 import { useRoute } from './lib/router'
-import { loadOnboardingCompleted, getConfig, getHistory, getDictionary, checkAccessibilityPermission } from './lib/tauri'
-import { initDeepLinkListener } from './lib/deep-link'
+import {
+  loadOnboardingCompleted,
+  getConfig,
+  getHistory,
+  getDictionary,
+  checkAccessibilityPermission,
+} from './lib/tauri'
 import { Capsule } from './components/Capsule'
 import { Settings } from './components/Settings'
 import { History } from './components/History'
 import { Onboarding } from './components/Onboarding'
 import { MainLayout } from './components/MainLayout'
 import { HomePage } from './components/HomePage'
-import { UpgradePage } from './components/UpgradePage'
-import { AccountPage } from './components/AccountPage'
 import { ToastContainer } from './components/Toast'
 
 function CapsuleApp() {
@@ -92,45 +94,14 @@ function MainApp() {
       }
       setLoaded(true)
     })
-
-    // Initialize auth session (non-blocking)
-    useAuthStore.getState().initialize()
-
-    // Initialize deep-link listener
-    initDeepLinkListener()
-  }, [setOnboardingCompleted, setConfig, setSavedConfig, setHistory, setDictionary, setAccessibilityTrusted])
-
-  const user = useAuthStore((s) => s.user)
-
-  // Periodically refresh subscription status + refresh on window focus (throttled)
-  useEffect(() => {
-    if (!loaded || !user) return
-
-    let lastRefresh = 0
-    const throttledRefresh = () => {
-      const now = Date.now()
-      const { checkoutPending } = useAuthStore.getState()
-      // Skip throttle if user just came back from checkout
-      if (!checkoutPending && now - lastRefresh < 30_000) return
-      lastRefresh = now
-      useAuthStore.getState().refreshSubscription()
-    }
-
-    const interval = setInterval(
-      () => {
-        lastRefresh = Date.now()
-        useAuthStore.getState().refreshSubscription()
-      },
-      5 * 60 * 1000,
-    )
-
-    window.addEventListener('focus', throttledRefresh)
-
-    return () => {
-      clearInterval(interval)
-      window.removeEventListener('focus', throttledRefresh)
-    }
-  }, [loaded, user])
+  }, [
+    setOnboardingCompleted,
+    setConfig,
+    setSavedConfig,
+    setHistory,
+    setDictionary,
+    setAccessibilityTrusted,
+  ])
 
   if (!loaded)
     return (
@@ -157,8 +128,6 @@ function MainApp() {
       {route === 'home' && <HomePage />}
       {route === 'settings' && <Settings />}
       {route === 'history' && <History />}
-      {route === 'upgrade' && <UpgradePage />}
-      {route === 'account' && <AccountPage />}
       <ToastContainer />
     </MainLayout>
   )

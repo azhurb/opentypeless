@@ -1,5 +1,4 @@
 pub mod assemblyai;
-pub mod cloud;
 pub mod deepgram;
 pub mod whisper_compat;
 
@@ -58,16 +57,6 @@ pub fn create_provider(
         }
     };
     match provider_name {
-        "cloud" => {
-            let api_base_url = crate::api_base_url();
-            match client {
-                Some(ref c) => Box::new(cloud::CloudSttProvider::with_client(
-                    api_base_url,
-                    c.clone(),
-                )),
-                None => Box::new(cloud::CloudSttProvider::new(api_base_url)),
-            }
-        }
         "assemblyai" => Box::new(assemblyai::AssemblyAiProvider::new()),
         "glm-asr" => make(WhisperCompatConfig {
             provider_name: "GLM-ASR",

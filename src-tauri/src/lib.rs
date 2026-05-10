@@ -17,24 +17,12 @@ use tracing_subscriber::EnvFilter;
 
 use std::sync::{Arc, Mutex};
 
-/// Default cloud API base URL. Override with the `API_BASE_URL` environment variable.
-pub const DEFAULT_API_BASE_URL: &str = "https://www.opentypeless.com";
-
-/// Read the cloud API base URL from the environment, falling back to the compiled default.
-pub fn api_base_url() -> String {
-    std::env::var("API_BASE_URL").unwrap_or_else(|_| DEFAULT_API_BASE_URL.to_string())
-}
-
 /// Cached hotkey mode to avoid loading config from disk on every keypress.
 /// Updated whenever config is saved.
 struct HotkeyModeCache(Arc<Mutex<String>>);
 
 /// Cached close_to_tray setting to avoid blocking I/O in the window close handler.
 struct CloseToTrayCache(Arc<Mutex<bool>>);
-
-/// Session token for cloud providers. Set by the frontend after Better Auth login.
-/// The Rust pipeline reads this when creating cloud STT/LLM providers.
-pub struct SessionTokenStore(pub Arc<Mutex<String>>);
 
 /// Managed tray icon handle for dynamic menu/tooltip updates.
 pub struct TrayHandle {
@@ -82,7 +70,6 @@ fn build_tray_menu(
     let sep2 = PredefinedMenuItem::separator(app)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
-    let account = MenuItem::with_id(app, "account", "Account", true, None::<&str>)?;
     let sep3 = PredefinedMenuItem::separator(app)?;
     let about = MenuItem::with_id(app, "about", "About OpenTypeless", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -90,7 +77,7 @@ fn build_tray_menu(
     let menu = Menu::with_items(
         app,
         &[
-            &show_hide, &sep1, &record, &sep2, &settings, &history, &account, &sep3, &about, &quit,
+            &show_hide, &sep1, &record, &sep2, &settings, &history, &sep3, &about, &quit,
         ],
     )?;
     Ok(menu)
@@ -162,39 +149,9 @@ async fn update_config(
 }
 
 #[tauri::command]
-async fn test_stt_connection(
-    api_key: String,
-    provider: String,
-    token_store: tauri::State<'_, SessionTokenStore>,
-) -> Result<bool, String> {
+async fn test_stt_connection(api_key: String, provider: String) -> Result<bool, String> {
     if provider.is_empty() {
         return Ok(false);
-    }
-
-    // Cloud provider: verify session token + Pro status via API
-    if provider == "cloud" {
-        let token = token_store
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if token.is_empty() {
-            return Ok(false);
-        }
-        let api_base = api_base_url();
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(format!("{}/api/subscription/status", api_base))
-            .header("Authorization", format!("Bearer {}", token))
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Ok(false);
-        }
-        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        return Ok(body["plan"].as_str() == Some("pro"));
     }
 
     if api_key.is_empty() {
@@ -285,36 +242,9 @@ async fn test_llm_connection(
     provider: String,
     base_url: String,
     model: String,
-    token_store: tauri::State<'_, SessionTokenStore>,
 ) -> Result<bool, String> {
     if provider.is_empty() {
         return Ok(false);
-    }
-
-    // Cloud provider: verify session token + Pro status via API
-    if provider == "cloud" {
-        let token = token_store
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if token.is_empty() {
-            return Ok(false);
-        }
-        let api_base = api_base_url();
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(format!("{}/api/subscription/status", api_base))
-            .header("Authorization", format!("Bearer {}", token))
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Ok(false);
-        }
-        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        return Ok(body["plan"].as_str() == Some("pro"));
     }
 
     if api_key.is_empty() || base_url.is_empty() {
@@ -400,43 +330,9 @@ async fn fetch_llm_models(api_key: String, base_url: String) -> Result<Vec<Strin
 }
 
 #[tauri::command]
-async fn bench_stt_connection(
-    api_key: String,
-    provider: String,
-    token_store: tauri::State<'_, SessionTokenStore>,
-) -> Result<u32, String> {
+async fn bench_stt_connection(api_key: String, provider: String) -> Result<u32, String> {
     if provider.is_empty() {
         return Err("No provider specified".to_string());
-    }
-
-    if provider == "cloud" {
-        let token = token_store
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if token.is_empty() {
-            return Err("Not signed in".to_string());
-        }
-        let api_base = api_base_url();
-        let client = reqwest::Client::new();
-        let t0 = std::time::Instant::now();
-        let resp = client
-            .get(format!("{}/api/subscription/status", api_base))
-            .header("Authorization", format!("Bearer {}", token))
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        let elapsed = t0.elapsed().as_millis() as u32;
-        if !resp.status().is_success() {
-            return Err("Request failed".to_string());
-        }
-        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        if body["plan"].as_str() != Some("pro") {
-            return Err("Pro plan required".to_string());
-        }
-        return Ok(elapsed);
     }
 
     if api_key.is_empty() {
@@ -541,42 +437,9 @@ async fn bench_llm_connection(
     provider: String,
     base_url: String,
     model: String,
-    token_store: tauri::State<'_, SessionTokenStore>,
 ) -> Result<u32, String> {
     if provider.is_empty() {
         return Err("No provider specified".to_string());
-    }
-
-    if provider == "cloud" {
-        let token = token_store
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if token.is_empty() {
-            return Err("Not signed in".to_string());
-        }
-        let api_base = api_base_url();
-        let client = reqwest::Client::new();
-        let body = serde_json::json!({
-            "messages": [{"role": "user", "content": "hi"}],
-            "stream": false
-        });
-        let t0 = std::time::Instant::now();
-        let resp = client
-            .post(format!("{}/api/proxy/llm", api_base))
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        let elapsed = t0.elapsed().as_millis() as u32;
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
-        }
-        return Ok(elapsed);
     }
 
     if api_key.is_empty() || base_url.is_empty() {
@@ -666,15 +529,6 @@ async fn remove_dictionary_entry(
     id: i64,
 ) -> Result<(), String> {
     state.remove(id).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn set_session_token(
-    state: tauri::State<'_, SessionTokenStore>,
-    token: String,
-) -> Result<(), String> {
-    *state.0.lock().unwrap_or_else(|e| e.into_inner()) = token;
-    Ok(())
 }
 
 #[tauri::command]
@@ -1126,15 +980,12 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Deep-link URL forwarding is handled automatically by the
-            // "deep-link" feature of single-instance plugin.
-            // Just focus the main window so the user sees the result.
+            // Focus the main window so a second launch surfaces the existing instance.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
         }))
-        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             // Open devtools only when the "devtools" feature is explicitly enabled
             #[cfg(feature = "devtools")]
@@ -1177,7 +1028,6 @@ pub fn run() {
             app.manage(CloseToTrayCache(Arc::new(Mutex::new(
                 initial_config.close_to_tray,
             ))));
-            app.manage(SessionTokenStore(Arc::new(Mutex::new(String::new()))));
 
             // Sync auto-start state with system
             {
@@ -1260,14 +1110,6 @@ pub fn run() {
                     "history" => {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.emit("tray:history", ());
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                            refresh_tray(app);
-                        }
-                    }
-                    "account" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.emit("navigate", "#/account");
                             let _ = window.show();
                             let _ = window.set_focus();
                             refresh_tray(app);
@@ -1435,7 +1277,6 @@ pub fn run() {
             pause_hotkey,
             resume_hotkey,
             set_auto_start,
-            set_session_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
