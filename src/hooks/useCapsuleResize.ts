@@ -24,7 +24,11 @@ function getSizeForState(
     case 'polishing':
       return { width: 220, height: 36 }
     case 'outputting':
-      return { width: 36, height: 36 }
+      // Match the polishing width so the window doesn't shrink mid-exit
+      // and clip the polishing capsule's right edge during AnimatePresence
+      // transition. Outputting's content (single centered checkmark) is
+      // ~38px, so it sits comfortably inside the wider window.
+      return { width: 220, height: 36 }
     default:
       return { width: 36, height: 36 }
   }
