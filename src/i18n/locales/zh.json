@@ -97,7 +97,6 @@
     "clipboardPaste": "剪贴板粘贴",
     "other": "其他",
     "launchAtStartup": "开机启动",
-    "startMinimized": "启动时最小化到托盘",
     "closeToTray": "关闭到系统托盘",
     "language": "语言",
     "provider": "服务商",

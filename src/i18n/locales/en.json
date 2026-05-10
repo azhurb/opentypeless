@@ -97,7 +97,6 @@
     "clipboardPaste": "Clipboard Paste",
     "other": "Other",
     "launchAtStartup": "Launch at Startup",
-    "startMinimized": "Start minimized to tray",
     "closeToTray": "Close to system tray",
     "language": "Language",
     "provider": "Provider",

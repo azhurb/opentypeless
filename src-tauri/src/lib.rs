@@ -1213,8 +1213,11 @@ pub fn run() {
                 }
             }
 
-            // Start minimized: only show window if not configured to start minimized
-            if !initial_config.start_minimized {
+            // OpenTypeless lives in the tray, so launches stay hidden by default.
+            // Exception: first run (no STT API key configured yet) — surface the
+            // settings window so onboarding is reachable without hunting for the
+            // tray icon.
+            if initial_config.stt_api_key.is_empty() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
