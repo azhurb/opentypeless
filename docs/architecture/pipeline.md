@@ -15,7 +15,7 @@ State changes emit `pipeline:state` to the frontend and update tray tooltip / ca
 1. `pipeline_lock` serializes setup so a fast press-release in hold mode cannot let `stop()` observe partially initialized state.
 2. State moves `Idle → Recording`.
 3. Config, current foreground-app context, and dictionary are loaded.
-4. STT API config is built. The API-key guard is skipped when the provider is `cloud` (the session token is used instead).
+4. STT API config is built. An empty API key aborts the pipeline before audio capture starts.
 5. STT provider connects before audio capture starts.
 6. Audio capture starts and streams chunks to STT.
 7. Partial and final transcript events are emitted to the frontend.

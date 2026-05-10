@@ -14,11 +14,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/tover0314-w/opentypeless"
+    "url": "https://github.com/azhurb/opentypeless"
   },
-  "homepage": "https://www.opentypeless.com",
+  "homepage": "https://github.com/azhurb/opentypeless",
   "bugs": {
-    "url": "https://github.com/tover0314-w/opentypeless/issues"
+    "url": "https://github.com/azhurb/opentypeless/issues"
   },
   "author": "OpenTypeless Contributors",
   "license": "MIT",
@@ -40,8 +40,6 @@
     "@tauri-apps/plugin-sql": "^2.2",
     "@tauri-apps/plugin-opener": "^2.2",
     "@tauri-apps/plugin-store": "^2.2",
-    "@tauri-apps/plugin-deep-link": "^2.2",
-    "better-auth": "^1.3",
     "framer-motion": "^11.18",
     "i18next": "^24.2",
     "lucide-react": "^0.460",

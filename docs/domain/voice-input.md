@@ -17,7 +17,6 @@ Evidence: `README.md`, `src-tauri/src/pipeline.rs`, `src-tauri/src/llm/prompt.rs
 
 - Hotkey mode: `hold` (record while held) or `toggle` (start/stop on each press).
 - Output mode: `keyboard` or `clipboard`.
-- Provider source: BYOK or `cloud` (see [Cloud Pro mode](cloud-pro.md)).
 - Optional: AI polish, translation, selected-text mode, custom dictionary, per-app context, local history, theme (dark/light/system).
 
 Defaults are listed in [Storage → AppConfig defaults](../architecture/storage.md#appconfig-defaults).

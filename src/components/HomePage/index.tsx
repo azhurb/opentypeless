@@ -1,19 +1,15 @@
-import { Mic, Settings, History, Crown } from 'lucide-react'
+import { Mic, Settings, History } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { spring } from '../../lib/animations'
 import { useAppStore } from '../../stores/appStore'
-import { useAuthStore } from '../../stores/authStore'
 import { useRoute } from '../../lib/router'
 
 export function HomePage() {
   const config = useAppStore((s) => s.config)
   const history = useAppStore((s) => s.history)
   const { navigate } = useRoute()
-  const { user, plan, sttSecondsUsed, sttSecondsLimit, llmTokensUsed, llmTokensLimit } =
-    useAuthStore()
   const { t } = useTranslation()
-  const isPro = plan === 'pro'
 
   const now = new Date()
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -54,66 +50,6 @@ export function HomePage() {
           <p className="text-[22px] font-semibold">{todayCount}</p>
         </div>
       </div>
-
-      {/* Plan / Quota summary */}
-      {user && (
-        <div className="rounded-[18px] p-5 jelly-card">
-          {isPro ? (
-            <>
-              <div className="flex items-center gap-2 mb-3">
-                <Crown size={16} className="text-amber-500" />
-                <h3 className="text-[13px] font-medium">{t('home.proPlan')}</h3>
-              </div>
-              <div className="space-y-3">
-                <QuotaBar
-                  label={t('upgrade.stt')}
-                  used={sttSecondsUsed}
-                  limit={sttSecondsLimit}
-                  unit="hours"
-                  divisor={3600}
-                />
-                <QuotaBar
-                  label={t('upgrade.llm')}
-                  used={llmTokensUsed}
-                  limit={llmTokensLimit}
-                  unit="k tokens"
-                  divisor={1000}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center justify-between">
-                <h3 className="text-[13px] font-medium">{t('home.freePlan')}</h3>
-                <button
-                  onClick={() => navigate('upgrade')}
-                  className="text-[12px] text-accent font-medium bg-transparent border-none cursor-pointer hover:underline"
-                >
-                  {t('home.upgradeToPro')}
-                </button>
-              </div>
-              {sttSecondsLimit > 0 && (
-                <div className="space-y-3 mt-3">
-                  <QuotaBar
-                    label={t('upgrade.stt')}
-                    used={sttSecondsUsed}
-                    limit={sttSecondsLimit}
-                    unit="min"
-                    divisor={60}
-                  />
-                  <QuotaBar
-                    label={t('upgrade.llm')}
-                    used={llmTokensUsed}
-                    limit={llmTokensLimit}
-                    unit="k tokens"
-                    divisor={1000}
-                  />
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
 
       {/* Current config */}
       <div className="rounded-[18px] p-5 jelly-card">
@@ -162,41 +98,6 @@ export function HomePage() {
           <History size={16} className="text-text-secondary" />
           <span className="text-[13px] font-medium">{t('nav.history')}</span>
         </motion.button>
-      </div>
-    </div>
-  )
-}
-
-function QuotaBar({
-  label,
-  used,
-  limit,
-  unit,
-  divisor,
-}: {
-  label: string
-  used: number
-  limit: number
-  unit: string
-  divisor: number
-}) {
-  const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 0
-  const usedDisplay = (used / divisor).toFixed(1)
-  const limitDisplay = (limit / divisor).toFixed(1)
-
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-[12px]">
-        <span className="text-text-secondary">{label}</span>
-        <span className="text-text-tertiary">
-          {usedDisplay} / {limitDisplay} {unit}
-        </span>
-      </div>
-      <div className="h-1.5 bg-bg-secondary rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : 'bg-accent'}`}
-          style={{ width: `${pct}%` }}
-        />
       </div>
     </div>
   )

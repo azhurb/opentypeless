@@ -92,16 +92,6 @@ vi.mock('../../../lib/tauri', () => ({
 // ─── Mock @tauri-apps/plugin-opener ─────────────────────────────────────────
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 
-// ─── Mock lib/api (ScenesPane uses getScenes) ────────────────────────────────
-vi.mock('../../../lib/api', () => ({
-  getScenes: vi.fn().mockResolvedValue([]),
-}))
-
-// ─── Mock stores/authStore ────────────────────────────────────────────────────
-vi.mock('../../../stores/authStore', () => ({
-  useAuthStore: () => ({ user: null, plan: 'free' }),
-}))
-
 // ─── Import components AFTER mocks ───────────────────────────────────────────
 import { Settings } from '../index'
 
@@ -163,12 +153,6 @@ describe('Settings tab switching', () => {
     renderSettings()
     clickSidebarItem('settings.dictionary')
     expect(screen.getByPlaceholderText('dictionary.word')).toBeDefined()
-  })
-
-  it('shows the sign-in prompt after clicking Scenes (user=null)', () => {
-    renderSettings()
-    clickSidebarItem('settings.scenes')
-    expect(screen.getByText('scenes.signInToBrowse')).toBeDefined()
   })
 
   it('shows the version info section after clicking About', () => {

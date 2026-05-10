@@ -16,7 +16,6 @@ Repository-local system of record for architecture, domain knowledge, decisions,
 
 - [Feature map](domain/features.md) — public features reconciled with repo evidence.
 - [Voice input](domain/voice-input.md) — recording flow and prompt behavior.
-- [Cloud Pro mode](domain/cloud-pro.md) — `cloud` providers and session token flow.
 - [Glossary](domain/glossary.md) — project terms.
 
 ## References
@@ -42,4 +41,4 @@ These are tracked here so future work can fill them rather than rediscover them:
 
 - No automated docs lint, dead-link check, or freshness check.
 - No generated reference for Tauri command signatures, event payloads, or DB schema (candidates listed in [`generated/README.md`](generated/README.md)).
-- No source-of-truth doc for: audio capture (`src-tauri/src/audio/`), keyboard/clipboard output (`src-tauri/src/output/`), foreground-app detection (`src-tauri/src/app_detector/`), tray menu wiring, onboarding flow, hotkey parsing/modifier rules, deep-link/auth flow, scene packs, or the `/api/proxy/*` cloud contract.
+- No source-of-truth doc for: audio capture (`src-tauri/src/audio/`), keyboard/clipboard output (`src-tauri/src/output/`), foreground-app detection (`src-tauri/src/app_detector/`), tray menu wiring, onboarding flow, or hotkey parsing/modifier rules.

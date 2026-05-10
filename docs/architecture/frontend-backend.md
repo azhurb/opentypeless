@@ -8,7 +8,7 @@ Evidence: `src/lib/tauri.ts`, `src-tauri/src/lib.rs`, `src/hooks/useTauriEvents.
 
 Rust commands are registered in the `tauri::generate_handler![...]` block at the bottom of `src-tauri/src/lib.rs`. TypeScript wrappers live in `src/lib/tauri.ts`.
 
-**Rule:** every `#[tauri::command]` must be both registered in `generate_handler!` and called via either a wrapper in `src/lib/tauri.ts` or a direct `invoke()` (e.g. `set_session_token` is invoked directly from `src/stores/authStore.ts`). Adding one without the other is a common integration bug.
+**Rule:** every `#[tauri::command]` must be both registered in `generate_handler!` and called via either a wrapper in `src/lib/tauri.ts` or a direct `invoke()`. Adding one without the other is a common integration bug.
 
 Current command groups (grep-verified against `generate_handler!`):
 
@@ -21,7 +21,6 @@ Current command groups (grep-verified against `generate_handler!`):
 - Dictionary: `get_dictionary`, `add_dictionary_entry`, `remove_dictionary_entry`.
 - Hotkey: `update_hotkey`, `pause_hotkey`, `resume_hotkey`.
 - Auto-start: `set_auto_start`.
-- Auth/cloud: `set_session_token`.
 
 A generated command/signature reference would be a good fit for [`docs/generated/`](../generated/README.md); none exists yet.
 
@@ -34,14 +33,12 @@ Event names emitted by the backend:
 - Pipeline: `pipeline:state`, `pipeline:error`, `pipeline:target_app`.
 - Audio/STT/LLM streams: `audio:volume`, `stt:partial`, `stt:final`, `llm:chunk`.
 - Tray: `tray:settings`, `tray:history`, `tray:about`.
-- Navigation: `navigate` (sent from the tray "account" action).
 
 Event payload contracts are not centrally documented yet; reading the emit sites is the source of truth.
 
 ## State
 
 - App state and persisted config: `src/stores/appStore.ts` (Zustand).
-- Cloud auth/session: `src/stores/authStore.ts`.
 
 ## Two Windows, One Bundle
 

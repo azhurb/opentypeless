@@ -7,7 +7,6 @@ import { GeneralPane } from './GeneralPane'
 import { SttPane } from './SttPane'
 import { LlmPane } from './LlmPane'
 import { DictionaryPane } from './DictionaryPane'
-import { ScenesPane } from './ScenesPane'
 import { AboutPane } from './AboutPane'
 import { DirtyBar, useDirtyConfig } from './shared/DirtyBar'
 
@@ -16,7 +15,6 @@ const paneTitleKeys: Record<PaneId, string> = {
   stt: 'settings.speechRecognition',
   llm: 'settings.aiPolish',
   dictionary: 'settings.dictionary',
-  scenes: 'settings.scenes',
   about: 'settings.about',
 }
 
@@ -60,7 +58,6 @@ export function Settings() {
                 {activePane === 'stt' && <SttPane />}
                 {activePane === 'llm' && <LlmPane />}
                 {activePane === 'dictionary' && <DictionaryPane />}
-                {activePane === 'scenes' && <ScenesPane />}
                 {activePane === 'about' && <AboutPane />}
               </motion.div>
             </AnimatePresence>

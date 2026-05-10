@@ -6,15 +6,11 @@ Rust + TypeScript config shape for user settings (providers, API keys, hotkey, o
 
 ## BYOK
 
-Bring Your Own Key. The user configures provider API keys locally and requests go directly to the chosen provider, not through OpenTypeless servers.
+Bring Your Own Key. The user configures provider API keys locally and requests go directly to the chosen provider. This fork is BYOK-only — there are no cloud or proxy modes.
 
 ## Capsule
 
 Small transparent always-on-top window that shows recording, processing, and completion state. See [Frontend ↔ Backend → Two Windows](../architecture/frontend-backend.md#two-windows-one-bundle).
-
-## Cloud Provider
-
-Special `cloud` STT or LLM provider that proxies through the OpenTypeless backend using a session bearer token. Detail: [Cloud Pro mode](cloud-pro.md).
 
 ## Dictionary
 
@@ -35,10 +31,6 @@ Rust orchestration flow from recording through transcription, polishing, output,
 ## Selected-Text Mode
 
 Mode where selected foreground-app text is captured with Cmd/Ctrl+C and passed to the LLM. Voice input becomes an instruction about that selected text.
-
-## Scene Pack
-
-Cloud-fetched pack containing a description, prompt template, and optional dictionary terms for a workflow. Fetched from `/api/scenes`.
 
 ## STT
 
