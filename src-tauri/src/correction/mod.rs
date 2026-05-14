@@ -101,14 +101,27 @@ async fn run<F>(
         if cur.value == baseline.value {
             continue;
         }
+        tracing::debug!(
+            "correction: change detected (baseline_len={}, current_len={})",
+            baseline.value.len(),
+            cur.value.len()
+        );
         let sub = match diff::find_single_word_substitution(
             &baseline.value,
             &cur.value,
             &typed_text,
         ) {
             Some(s) => s,
-            None => continue,
+            None => {
+                tracing::debug!("correction: diff found no single-word substitution");
+                continue;
+            }
         };
+        tracing::debug!(
+            "correction: candidate substitution old_len={} new_len={}",
+            sub.old.len(),
+            sub.new.len()
+        );
         let existing_lower: Vec<String> = dictionary
             .words()
             .await
@@ -116,6 +129,7 @@ async fn run<F>(
             .map(|w| w.to_lowercase())
             .collect();
         if !classify::is_dictionary_candidate(&sub.old, &sub.new, &existing_lower) {
+            tracing::debug!("correction: classifier rejected candidate");
             continue;
         }
         let row_id = match dictionary.add(&sub.new, None).await {
@@ -125,6 +139,7 @@ async fn run<F>(
                 return;
             }
         };
+        tracing::debug!("correction: emitting suggestion row_id={}", row_id);
         on_suggest(CorrectionSuggestion {
             row_id,
             old: sub.old,

@@ -72,6 +72,58 @@ pub fn find_single_word_substitution(
     current: &str,
     typed_text: &str,
 ) -> Option<WordSubstitution> {
+    if let Some(sub) = anchored(baseline, current, typed_text) {
+        return Some(sub);
+    }
+    // Fallback: anchor missed because what's in the field isn't byte-identical
+    // to what we typed (smart-quote conversion, Unicode normalization, IME
+    // composition, autocorrect). Compare the full strings as a best effort.
+    compare_full(baseline, current)
+}
+
+fn collect_words(s: &str) -> Vec<&str> {
+    tokenize(s)
+        .into_iter()
+        .filter_map(|t| match t {
+            Tok::Word(w) => Some(w),
+            Tok::Other => None,
+        })
+        .collect()
+}
+
+fn compare_word_lists<'a>(b_words: &[&'a str], all_c_words: &[&'a str]) -> Option<WordSubstitution> {
+    let n = b_words.len();
+    // current must have at least as many words as baseline (deletions are rejected).
+    if all_c_words.len() < n || n == 0 {
+        return None;
+    }
+    let c_words = &all_c_words[..n];
+    let mut diff_pos: Option<usize> = None;
+    let mut diff_count = 0usize;
+    for (i, (bw, cw)) in b_words.iter().zip(c_words.iter()).enumerate() {
+        if bw != cw {
+            diff_count += 1;
+            if diff_count > 1 {
+                return None;
+            }
+            diff_pos = Some(i);
+        }
+    }
+    let i = diff_pos?; // None means no change
+    // Guard against word insertion (rather than substitution): if the old word
+    // still appears anywhere after position i in all_c_words, it was shifted by
+    // an insertion — not substituted.
+    let old_word = b_words[i];
+    if all_c_words[i + 1..].contains(&old_word) {
+        return None;
+    }
+    Some(WordSubstitution {
+        old: old_word.to_string(),
+        new: c_words[i].to_string(),
+    })
+}
+
+fn anchored(baseline: &str, current: &str, typed_text: &str) -> Option<WordSubstitution> {
     let base_idx = baseline.find(typed_text)?;
     let typed_end = base_idx + typed_text.len();
 
@@ -91,7 +143,9 @@ pub fn find_single_word_substitution(
     };
 
     let cur_end = if !suffix_anchor.is_empty() {
-        current[cur_start..].find(suffix_anchor).map(|off| cur_start + off)?
+        current[cur_start..]
+            .find(suffix_anchor)
+            .map(|off| cur_start + off)?
     } else {
         current.len()
     };
@@ -99,57 +153,15 @@ pub fn find_single_word_substitution(
     let baseline_span = &baseline[base_idx..typed_end];
     let current_span = &current[cur_start..cur_end];
 
-    let b_words: Vec<&str> = tokenize(baseline_span)
-        .into_iter()
-        .filter_map(|t| match t {
-            Tok::Word(w) => Some(w),
-            Tok::Other => None,
-        })
-        .collect();
-    // Collect ALL word tokens from current_span (may include tail after the span).
-    let all_c_words: Vec<&str> = tokenize(current_span)
-        .into_iter()
-        .filter_map(|t| match t {
-            Tok::Word(w) => Some(w),
-            Tok::Other => None,
-        })
-        .collect();
+    let b_words = collect_words(baseline_span);
+    let all_c_words = collect_words(current_span);
+    compare_word_lists(&b_words, &all_c_words)
+}
 
-    let n = b_words.len();
-
-    // current must have at least as many words as baseline (deletions are rejected).
-    if all_c_words.len() < n {
-        return None;
-    }
-
-    // Compare the first N words of current against baseline words.
-    let c_words = &all_c_words[..n];
-    let mut diff_pos: Option<usize> = None;
-    let mut diff_count = 0usize;
-    for (i, (bw, cw)) in b_words.iter().zip(c_words.iter()).enumerate() {
-        if bw != cw {
-            diff_count += 1;
-            if diff_count > 1 {
-                return None;
-            }
-            diff_pos = Some(i);
-        }
-    }
-
-    let i = diff_pos?; // None means no change
-
-    // Guard against word insertion (rather than substitution): if the old word
-    // still appears anywhere after position i in all_c_words, the old word was
-    // shifted by an insertion — not substituted.
-    let old_word = b_words[i];
-    if all_c_words[i + 1..].contains(&old_word) {
-        return None;
-    }
-
-    Some(WordSubstitution {
-        old: old_word.to_string(),
-        new: c_words[i].to_string(),
-    })
+fn compare_full(baseline: &str, current: &str) -> Option<WordSubstitution> {
+    let b_words = collect_words(baseline);
+    let all_c_words = collect_words(current);
+    compare_word_lists(&b_words, &all_c_words)
 }
 
 #[cfg(test)]
@@ -225,6 +237,24 @@ mod tests {
             "Hello dear Tim ",
         )
         .is_none());
+    }
+
+    #[test]
+    fn fallback_when_typed_text_not_byte_identical_in_field() {
+        // Simulates what we hit on macOS: the field's value differs from typed_text
+        // by a smart-quote substitution (curly apostrophe). `find(typed_text)` returns
+        // None in both baseline and current; the fallback path runs on full strings.
+        let baseline = "Roberto\u{2019}s schedule. ";
+        let current = "Robert\u{2019}s schedule. ";
+        // typed_text uses the straight ASCII apostrophe that we believed we typed.
+        let got = find_single_word_substitution(baseline, current, "Roberto's schedule. ");
+        assert_eq!(
+            got,
+            Some(WordSubstitution {
+                old: "Roberto".into(),
+                new: "Robert".into(),
+            })
+        );
     }
 
     #[test]
