@@ -21,6 +21,7 @@ Current command groups (grep-verified against `generate_handler!`):
 - Dictionary: `get_dictionary`, `add_dictionary_entry`, `remove_dictionary_entry`.
 - Hotkey: `update_hotkey`, `pause_hotkey`, `resume_hotkey`.
 - Auto-start: `set_auto_start`.
+- Corrections: `correction_undo`.
 
 A generated command/signature reference would be a good fit for [`docs/generated/`](../generated/README.md); none exists yet.
 
@@ -32,6 +33,7 @@ Event names emitted by the backend:
 
 - Pipeline: `pipeline:state`, `pipeline:error`, `pipeline:target_app`.
 - Audio/STT/LLM streams: `audio:volume`, `stt:partial`, `stt:final`, `llm:chunk`.
+- Corrections: `correction:suggest` (emitted to the capsule window only).
 - Tray: `tray:settings`, `tray:history`, `tray:about`.
 
 Event payload contracts are not centrally documented yet; reading the emit sites is the source of truth.

@@ -130,6 +130,10 @@ Needs confirmation:
 
 - Pronunciation is stored in the dictionary schema/UI, but current prompt construction uses only words from `DictionaryStore::words()`.
 
+### Learn From Corrections (macOS, experimental)
+
+Off by default. When enabled (Settings → Dictionary → "Learn from corrections"), OpenTypeless watches the focused text field via macOS Accessibility for ~15 s after each dictation. If the user replaces exactly one word inside the typed span with a proper-noun-shaped replacement (capitalized, camelCase, all-caps acronym, or alphanumeric brand), the new word is added to the dictionary optimistically and a 5 s Undo toast appears in the capsule overlay. The watcher skips `AXSecureTextField` (password fields) and never logs field values. Implementation lives in `src-tauri/src/correction/`; frontend toast in `src/components/Capsule/CorrectionToast.tsx`.
+
 ## Privacy And Local-First BYOK
 
 User-facing promise: API keys stay local and provider requests go directly to the selected provider. There are no OpenTypeless servers in the loop.

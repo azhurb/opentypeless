@@ -27,6 +27,7 @@ Verified against `src-tauri/src/storage/mod.rs::Default::default`:
 | `output_mode` | `keyboard` |
 | `close_to_tray` | `true` |
 | `max_recording_seconds` | `30` |
+| `learn_from_corrections_enabled` | `false` |
 
 If you add or change a default, update this table in the same PR.
 

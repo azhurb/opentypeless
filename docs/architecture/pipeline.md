@@ -40,6 +40,7 @@ Pipeline-related events emitted by the backend:
 - `audio:volume` — input level samples for the capsule waveform.
 - `stt:partial`, `stt:final` — transcript updates.
 - `llm:chunk` — streamed polished text from the LLM.
+- `correction:suggest` — emitted to the capsule window when the post-dictation watcher finds a single-word substitution that passes the heuristic. Payload: `{ rowId, old, new, autoConfirmMs }`. The watcher runs only when `learn_from_corrections_enabled` is set in `AppConfig` and macOS Accessibility is granted.
 
 This list is grep-verified from `src-tauri/src/pipeline.rs` and `src-tauri/src/lib.rs`. If an event is added or renamed, update [`frontend-backend.md`](frontend-backend.md) too.
 
