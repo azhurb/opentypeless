@@ -10,13 +10,13 @@ const COMMON_WORDS: &[&str] = &[
     "then","now","look","only","come","its","over","think","also","back","after","use","two",
     "how","our","work","first","well","way","even","new","want","because","any","these","give",
     "day","most","us","is","are","was","were","been","has","had","does","did","being","having",
-    "am","yes","no","ok","okay","please","thanks","thank","hello","hi","hey","yeah","sure",
+    "am","yes","ok","okay","please","thanks","thank","hello","hi","hey","yeah","sure",
     "maybe","really","actually","probably","kind","sort","things","thing","stuff","right",
     "left","next","last","fine","great","nice","sorry","again","still","very","much","more",
     "less","few","many","every","always","never","sometimes","often","once","twice","may",
     "should","must","might","let","lets","need","needs","got","gotten","comes","came","goes",
     "went","seen","done","made","said","told","asked","tried","tries","seems","seemed","felt",
-    "found","kept","brought","heard","held","stood","sat","ran","left","met",
+    "found","kept","brought","heard","held","stood","sat","ran","met",
 ];
 
 fn first_char(s: &str) -> Option<char> {
@@ -34,7 +34,7 @@ fn is_all_caps_acronym(s: &str) -> bool {
 }
 
 fn contains_digit(s: &str) -> bool {
-    s.chars().any(|c| c.is_numeric())
+    s.chars().any(|c| c.is_ascii_digit())
 }
 
 fn only_allowed_chars(s: &str) -> bool {
