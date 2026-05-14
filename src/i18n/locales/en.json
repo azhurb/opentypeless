@@ -147,6 +147,7 @@
   },
   "correction": {
     "added": "Added \"{{new}}\" to your dictionary",
+    "replaced": "Replaced \"{{old}}\" with \"{{new}}\"",
     "undo": "Undo",
     "removed": "Removed \"{{new}}\" from your dictionary"
   },

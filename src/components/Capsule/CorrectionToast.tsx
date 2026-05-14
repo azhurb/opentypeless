@@ -100,7 +100,7 @@ export function CorrectionToast() {
           <span className="select-none flex-1 min-w-0 truncate">
             {mode === 'undone'
               ? t('correction.removed', { new: suggestion.new })
-              : t('correction.added', { new: suggestion.new })}
+              : t('correction.replaced', { old: suggestion.old, new: suggestion.new })}
           </span>
           {mode !== 'undone' && (
             <button
