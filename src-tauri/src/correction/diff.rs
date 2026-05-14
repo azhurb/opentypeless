@@ -229,14 +229,13 @@ mod tests {
 
     #[test]
     fn handles_multibyte_chars_near_anchor_boundary() {
-        // ü (U+00FC, 2 bytes) sits at byte offset 8 inside the prefix context.
-        // Without the char-boundary snap, `base_idx.saturating_sub(8)` lands on
-        // ü's second byte and the slice panics.  The space before "Timmy" ensures
-        // the tokenizer can isolate "Timmy" as a distinct word token.
-        let baseline = "aaaaaaa\u{FC} Timmy ";
-        let current  = "aaaaaaa\u{FC} Tim ";
-        // typed_text is only the tail so that base_idx > 0 and the prefix anchor
-        // is built from a region that straddles the multibyte character.
+        // ü (U+00FC) is 2 bytes (0xC3 0xBC).  With 6 ASCII chars ("xxxxxx") between
+        // ü and "Timmy", base_idx for "Timmy " is 16, so base_idx - 8 = 8, which
+        // lands on ü's continuation byte (0xBC).  Without snap_floor the raw slice
+        // baseline[8..16] panics; snap_floor walks back to byte 7 (start of ü).
+        let baseline = "aaaaaaa\u{FC}xxxxxx Timmy ";
+        let current  = "aaaaaaa\u{FC}xxxxxx Tim ";
+        assert_eq!(baseline.find("Timmy ").unwrap(), 16);
         let got = find_single_word_substitution(baseline, current, "Timmy ");
         assert_eq!(got, Some(WordSubstitution { old: "Timmy".into(), new: "Tim".into() }));
     }
