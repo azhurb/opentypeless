@@ -41,8 +41,12 @@ impl CorrectionHandle {
     }
 }
 
+// Wispr Flow uses exactly 1.0 s (`DispatchTimeInterval.seconds(1)`, verified
+// via static disassembly of their Swift helper — see
+// .scratch-wispr/findings/02-swift-helper.md). 1 s is also frugal on CPU and
+// AX traffic; the toast is a 5 s auto-confirm so reaction time is fine.
 #[cfg(not(test))]
-const POLL_INTERVAL_MS: u64 = 250;
+const POLL_INTERVAL_MS: u64 = 1000;
 #[cfg(test)]
 const POLL_INTERVAL_MS: u64 = 25;
 
@@ -116,6 +120,12 @@ async fn run<F>(
     // end (empty suffix anchor matches anything trailing), so we keep this
     // debounce as defense-in-depth.
     let mut pending_value: Option<String> = None;
+    // Latest cur.value that differed from baseline. If WATCH_DURATION elapses
+    // without an emit, the timeout-emit path tries the degenerate (full-string
+    // compare) diff one last time on this value. Mirrors Wispr's verified
+    // timeout behavior — their 60 s watchdog calls the same emit helper as the
+    // success path, see .scratch-wispr/findings/02-swift-helper.md.
+    let mut last_changed: Option<String> = None;
     while !cancelled.load(Ordering::Relaxed)
         && started.elapsed() < Duration::from_millis(WATCH_DURATION_MS)
     {
@@ -129,8 +139,10 @@ async fn run<F>(
         };
         if cur.value == baseline.value {
             pending_value = None;
+            last_changed = None;
             continue;
         }
+        last_changed = Some(cur.value.clone());
         let stable = matches!(&pending_value, Some(prev) if prev == &cur.value);
         if !stable {
             tracing::debug!(
@@ -140,75 +152,126 @@ async fn run<F>(
             pending_value = Some(cur.value.clone());
             continue;
         }
-        // Stable. Decide which diff path to take.
-        let sub = if anchors.is_degenerate() {
+        // Stable. Try to build a suggestion via the boundary-aware path.
+        if let Some(sugg) = try_build_suggestion(
+            &baseline.value,
+            &cur.value,
+            &typed_text,
+            &dictionary,
+            Some(&anchors),
+        )
+        .await
+        {
             tracing::debug!(
-                "correction: stable change, degenerate anchors fallback (baseline_len={}, current_len={})",
-                baseline.value.len(),
-                cur.value.len()
+                "correction: emitting suggestion row_id={} (boundary path)",
+                sugg.row_id
             );
-            match diff::find_single_word_substitution(&baseline.value, &cur.value, &typed_text) {
-                Some(s) => s,
-                None => {
-                    tracing::debug!("correction: diff found no single-word substitution");
-                    continue;
-                }
-            }
-        } else {
-            let span = match boundary::find_span(&cur.value, &anchors) {
+            on_suggest(sugg);
+            return;
+        }
+    }
+    // Watch window elapsed. One last attempt on the latest-seen edited value
+    // using the more permissive degenerate diff path. This is Wispr's safety
+    // net for cases where the boundary anchors never realign (e.g., user edits
+    // the suffix context, or single-word dictation with no surrounding text).
+    if cancelled.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Some(cur_value) = last_changed {
+        tracing::debug!("correction: watch timeout reached, attempting emit on last-seen value");
+        if let Some(sugg) = try_build_suggestion(
+            &baseline.value,
+            &cur_value,
+            &typed_text,
+            &dictionary,
+            None,
+        )
+        .await
+        {
+            tracing::debug!(
+                "correction: emitting suggestion row_id={} (timeout path)",
+                sugg.row_id
+            );
+            on_suggest(sugg);
+        }
+    }
+}
+
+/// Run the diff → classify → insert pipeline. Returns the built suggestion
+/// (with row_id) only when all stages accept; otherwise None and no DB write
+/// happens. Safe to call repeatedly; each Some result writes exactly one row.
+async fn try_build_suggestion(
+    baseline_value: &str,
+    cur_value: &str,
+    typed_text: &str,
+    dictionary: &DictionaryStore,
+    anchors: Option<&boundary::Anchors>,
+) -> Option<CorrectionSuggestion> {
+    let sub = match anchors {
+        Some(a) if !a.is_degenerate() => {
+            let span = match boundary::find_span(cur_value, a) {
                 Some(r) => r,
                 None => {
                     tracing::debug!(
                         "correction: boundaries not aligned (current_len={})",
-                        cur.value.len()
+                        cur_value.len()
                     );
-                    continue;
+                    return None;
                 }
             };
-            tracing::debug!(
-                "correction: boundaries aligned, span_len={}",
-                span.len()
-            );
-            let current_span = &cur.value[span];
-            match diff::find_word_substitution_in_spans(&typed_text, current_span) {
+            tracing::debug!("correction: boundaries aligned, span_len={}", span.len());
+            let current_span = &cur_value[span];
+            match diff::find_word_substitution_in_spans(typed_text, current_span) {
                 Some(s) => s,
                 None => {
                     tracing::debug!("correction: diff found no single-word substitution in span");
-                    continue;
+                    return None;
                 }
             }
-        };
-        tracing::debug!(
-            "correction: candidate substitution old_len={} new_len={}",
-            sub.old.len(),
-            sub.new.len()
-        );
-        let existing_lower: Vec<String> = dictionary
-            .words()
-            .await
-            .into_iter()
-            .map(|w| w.to_lowercase())
-            .collect();
-        if !classify::is_dictionary_candidate(&sub.old, &sub.new, &existing_lower) {
-            tracing::debug!("correction: classifier rejected candidate");
-            continue;
         }
-        let row_id = match dictionary.add_learned(&sub.new, &sub.old).await {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::warn!("dictionary insert failed during correction: {}", e);
-                return;
+        _ => {
+            tracing::debug!(
+                "correction: degenerate-path diff (baseline_len={}, current_len={})",
+                baseline_value.len(),
+                cur_value.len()
+            );
+            match diff::find_single_word_substitution(baseline_value, cur_value, typed_text) {
+                Some(s) => s,
+                None => {
+                    tracing::debug!("correction: diff found no single-word substitution");
+                    return None;
+                }
             }
-        };
-        tracing::debug!("correction: emitting suggestion row_id={}", row_id);
-        on_suggest(CorrectionSuggestion {
-            row_id,
-            old: sub.old,
-            new: sub.new,
-            auto_confirm_ms: AUTO_CONFIRM_MS,
-        });
-        return;
+        }
+    };
+    tracing::debug!(
+        "correction: candidate substitution old_len={} new_len={}",
+        sub.old.len(),
+        sub.new.len()
+    );
+    let existing_lower: Vec<String> = dictionary
+        .words()
+        .await
+        .into_iter()
+        .map(|w| w.to_lowercase())
+        .collect();
+    if !classify::is_dictionary_candidate(&sub.old, &sub.new, &existing_lower) {
+        tracing::debug!("correction: classifier rejected candidate");
+        return None;
     }
+    let row_id = match dictionary.add_learned(&sub.new, &sub.old).await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!("dictionary insert failed during correction: {}", e);
+            return None;
+        }
+    };
+    Some(CorrectionSuggestion {
+        row_id,
+        old: sub.old,
+        new: sub.new,
+        auto_confirm_ms: AUTO_CONFIRM_MS,
+    })
 }
 
 async fn snapshot_with_retry(
@@ -499,6 +562,38 @@ mod tests {
             got.is_err(),
             "boundaries never realign — must not fire spurious suggestion"
         );
+    }
+
+    #[tokio::test]
+    async fn emits_on_timeout_when_boundaries_never_align() {
+        // User dictated "Bob" into a field with surrounding context. Then they
+        // modified the SUFFIX context (not the dictation) — anchors never
+        // realign. The watcher should still fire at watchdog timeout using the
+        // degenerate diff path on the latest-seen value.
+        //
+        // baseline = "Hi Bob bye" (anchors prefix="Hi ", suffix=" bye")
+        // current  = "Hi Bob Vladimir" — user replaced " bye" with " Vladimir".
+        //   - Boundary check fails (suffix " bye" not in current).
+        //   - Degenerate diff: ["Hi","Bob","bye"] vs ["Hi","Bob","Vladimir"]
+        //     → single substitution bye → Vladimir.
+        //   - Classifier accepts (capital V, len 8).
+        let field = FakeField::new(vec![
+            mk("Hi Bob bye", "Bob"),         // baseline
+            mk("Hi Bob Vladimir", "Bob"),    // user edited the suffix
+            mk("Hi Bob Vladimir", "Bob"),    // stable; loop runs until WATCH_DURATION
+        ]);
+        let dict = temp_store();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _h = spawn(field, dict.clone(), "Bob".to_string(), move |s| {
+            let _ = tx.send(s);
+        });
+        // Wait past the test-mode WATCH_DURATION_MS (2000ms).
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(2_500)))
+            .await
+            .unwrap()
+            .expect("timeout-emit must fire on degenerate path");
+        assert_eq!(got.old, "bye");
+        assert_eq!(got.new, "Vladimir");
     }
 
     #[tokio::test]
