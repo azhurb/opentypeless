@@ -5,9 +5,13 @@ import { useAppStore } from '../../stores/appStore'
 import { addDictionaryEntry, removeDictionaryEntry, getDictionary } from '../../lib/tauri'
 import { toast } from '../Toast'
 
+const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC')
+
 export function DictionaryPane() {
   const dictionary = useAppStore((s) => s.dictionary)
   const setDictionary = useAppStore((s) => s.setDictionary)
+  const config = useAppStore((s) => s.config)
+  const updateConfig = useAppStore((s) => s.updateConfig)
   const { t } = useTranslation()
   const [word, setWord] = useState('')
   const [pronunciation, setPronunciation] = useState('')
@@ -39,6 +43,32 @@ export function DictionaryPane() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-start gap-3 p-3 bg-bg-secondary rounded-[10px] border border-border">
+        <input
+          id="learn-from-corrections"
+          type="checkbox"
+          checked={config.learn_from_corrections_enabled}
+          disabled={!isMac}
+          onChange={(e) =>
+            updateConfig({ learn_from_corrections_enabled: e.target.checked })
+          }
+          className="mt-0.5"
+        />
+        <label htmlFor="learn-from-corrections" className="flex-1">
+          <div className="text-[13px] text-text-primary font-medium">
+            {t('dictionary.learnFromCorrections.label')}
+          </div>
+          <div className="text-[12px] text-text-secondary mt-0.5">
+            {t('dictionary.learnFromCorrections.description')}
+          </div>
+          {!isMac && (
+            <div className="text-[11px] text-text-tertiary mt-1">
+              {t('dictionary.learnFromCorrections.macOnly')}
+            </div>
+          )}
+        </label>
+      </div>
+
       <div className="flex gap-2">
         <input
           value={word}
