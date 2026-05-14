@@ -15,6 +15,7 @@ export function useTauriEvents() {
     setPipelineError,
     setAccessibilityTrusted,
     setHistory,
+    setCorrectionSuggestion,
   } = useAppStore()
 
   useEffect(() => {
@@ -77,6 +78,18 @@ export function useTauriEvents() {
       window.location.hash = '#/settings'
     })
 
+    addListener<{ rowId: number; old: string; new: string; autoConfirmMs: number }>(
+      'correction:suggest',
+      (payload) => {
+        setCorrectionSuggestion({
+          rowId: payload.rowId,
+          old: payload.old,
+          new: payload.new,
+          autoConfirmMs: payload.autoConfirmMs,
+        })
+      },
+    )
+
     return () => {
       cancelled = true
       unlisteners.forEach((unlisten) => unlisten())
@@ -91,5 +104,6 @@ export function useTauriEvents() {
     setPipelineError,
     setAccessibilityTrusted,
     setHistory,
+    setCorrectionSuggestion,
   ])
 }

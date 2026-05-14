@@ -68,6 +68,13 @@ export interface AppConfig {
 
 export type TestStatus = 'idle' | 'testing' | 'success' | 'error'
 
+export interface CorrectionSuggestion {
+  rowId: number
+  old: string
+  new: string
+  autoConfirmMs: number
+}
+
 interface AppState {
   // Pipeline
   pipelineState: PipelineState
@@ -131,6 +138,10 @@ interface AppState {
   // Pipeline error
   pipelineError: string | null
   setPipelineError: (error: string | null) => void
+
+  // Correction suggestion (learn from corrections toast)
+  correctionSuggestion: CorrectionSuggestion | null
+  setCorrectionSuggestion: (s: CorrectionSuggestion | null) => void
 
   // macOS Accessibility permission
   accessibilityTrusted: boolean
@@ -230,6 +241,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   pipelineError: null,
   setPipelineError: (pipelineError) => set({ pipelineError }),
+
+  correctionSuggestion: null,
+  setCorrectionSuggestion: (correctionSuggestion) => set({ correctionSuggestion }),
 
   accessibilityTrusted: true,
   setAccessibilityTrusted: (accessibilityTrusted) => set({ accessibilityTrusted }),

@@ -10,6 +10,7 @@ import { CapsulePolishing } from './CapsulePolishing'
 import { CapsuleComplete } from './CapsuleComplete'
 import { CapsuleError } from './CapsuleError'
 import { CapsuleContextMenu } from './CapsuleContextMenu'
+import { CorrectionToast } from './CorrectionToast'
 
 const DRAG_THRESHOLD = 5
 
@@ -132,6 +133,8 @@ export function Capsule() {
           <CapsuleContextMenu onClose={handleCloseMenu} />
         </div>
       )}
+
+      <CorrectionToast />
     </div>
   )
 }

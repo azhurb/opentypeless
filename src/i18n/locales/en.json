@@ -137,8 +137,18 @@
     "pronunciationOptional": "Pronunciation (optional)",
     "add": "Add",
     "noEntries": "No entries yet. Add proper nouns to improve recognition accuracy.",
+    "learnFromCorrections": {
+      "label": "Learn from corrections (macOS, experimental)",
+      "description": "After dictation, OpenTypeless watches your edits for ~15 s and offers to add fixed names and terms here. Reads the focused text field via macOS Accessibility — already granted for keyboard output.",
+      "macOnly": "macOS only for now"
+    },
     "failedToAdd": "Failed to add dictionary entry",
     "failedToRemove": "Failed to remove dictionary entry"
+  },
+  "correction": {
+    "added": "Added \"{{new}}\" to your dictionary",
+    "undo": "Undo",
+    "removed": "Removed \"{{new}}\" from your dictionary"
   },
   "history": {
     "title": "History",

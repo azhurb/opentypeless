@@ -1,0 +1,104 @@
+import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
+import { useAppStore } from '../../stores/appStore'
+import { correctionUndo } from '../../lib/tauri'
+import { spring } from '../../lib/animations'
+
+type Mode = 'idle' | 'undone'
+
+export function CorrectionToast() {
+  const suggestion = useAppStore((s) => s.correctionSuggestion)
+  const clearSuggestion = useAppStore((s) => s.setCorrectionSuggestion)
+  const pipelineState = useAppStore((s) => s.pipelineState)
+  const { t } = useTranslation()
+  const [progress, setProgress] = useState(0)
+  const [mode, setMode] = useState<Mode>('idle')
+  const startedAtRef = useRef<number | null>(null)
+  const rafRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (suggestion && pipelineState !== 'idle') {
+      clearSuggestion(null)
+      setMode('idle')
+      setProgress(0)
+    }
+  }, [pipelineState, suggestion, clearSuggestion])
+
+  useEffect(() => {
+    if (!suggestion || mode !== 'idle') return
+    startedAtRef.current = performance.now()
+    const tick = () => {
+      const start = startedAtRef.current
+      if (start === null || !suggestion) return
+      const elapsed = performance.now() - start
+      const p = Math.min(1, elapsed / suggestion.autoConfirmMs)
+      setProgress(p)
+      if (p < 1) {
+        rafRef.current = requestAnimationFrame(tick)
+      } else {
+        clearSuggestion(null)
+        setProgress(0)
+      }
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  }, [suggestion, mode, clearSuggestion])
+
+  const handleUndo = async () => {
+    if (!suggestion) return
+    try {
+      await correctionUndo(suggestion.rowId)
+      setMode('undone')
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      setTimeout(() => {
+        clearSuggestion(null)
+        setMode('idle')
+        setProgress(0)
+      }, 1000)
+    } catch (e) {
+      console.error('correctionUndo failed:', e)
+      clearSuggestion(null)
+      setMode('idle')
+    }
+  }
+
+  return (
+    <AnimatePresence>
+      {suggestion && (
+        <motion.div
+          initial={{ opacity: 0, y: 8, scale: 0.96 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 8, scale: 0.96 }}
+          transition={spring.jellyGentle}
+          className="pointer-events-auto absolute left-1/2 -translate-x-1/2 top-full mt-3 flex items-center gap-3 px-4 py-2.5 bg-black/90 backdrop-blur-sm rounded-full text-white text-[13px] shadow-2xl overflow-hidden"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="select-none">
+            {mode === 'undone'
+              ? t('correction.removed', { new: suggestion.new })
+              : t('correction.added', { new: suggestion.new })}
+          </span>
+          {mode !== 'undone' && (
+            <button
+              type="button"
+              onClick={handleUndo}
+              className="px-3 py-1 bg-white/15 hover:bg-white/25 active:bg-white/10 transition-colors rounded-full text-white text-[12px] font-medium border-none cursor-pointer"
+            >
+              {t('correction.undo')}
+            </button>
+          )}
+          <div
+            className="absolute left-0 bottom-0 h-[2px] bg-white/60"
+            style={{ width: `${progress * 100}%` }}
+            aria-hidden="true"
+          />
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
