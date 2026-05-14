@@ -13,10 +13,6 @@ extern "C" {
         attribute: *mut c_void,
         out_value: *mut *mut c_void,
     ) -> i32;
-
-    static kAXFocusedUIElementAttribute: *mut c_void;
-    static kAXValueAttribute: *mut c_void;
-    static kAXRoleAttribute: *mut c_void;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -31,10 +27,25 @@ extern "C" {
         buffer_size: isize,
         encoding: u32,
     ) -> u8;
+    fn CFStringCreateWithCString(
+        alloc: *mut c_void,
+        cstr: *const u8,
+        encoding: u32,
+    ) -> *mut c_void;
 }
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x08000100;
 const AX_SECURE_TEXT_FIELD: &str = "AXSecureTextField";
+
+// The AX attribute extern statics (kAXFocusedUIElementAttribute, kAXValueAttribute,
+// kAXRoleAttribute) live in the HIServices subframework and aren't visible to the
+// release linker through the ApplicationServices umbrella in all toolchains. Build the
+// CFStringRefs at runtime from their well-known names instead — same value, no linkage
+// dependency.
+unsafe fn cfstr(name: &[u8]) -> *mut c_void {
+    // `name` must be NUL-terminated.
+    CFStringCreateWithCString(ptr::null_mut(), name.as_ptr(), K_CF_STRING_ENCODING_UTF8)
+}
 
 pub struct MacOsFocusedField {
     _private: (),
@@ -72,22 +83,43 @@ fn read_focused_value() -> Option<(String, bool)> {
         if !crate::pipeline::is_accessibility_trusted() {
             return None;
         }
+        let attr_focused = cfstr(b"AXFocusedUIElement\0");
+        let attr_role = cfstr(b"AXRole\0");
+        let attr_value = cfstr(b"AXValue\0");
+        if attr_focused.is_null() || attr_role.is_null() || attr_value.is_null() {
+            if !attr_focused.is_null() {
+                CFRelease(attr_focused);
+            }
+            if !attr_role.is_null() {
+                CFRelease(attr_role);
+            }
+            if !attr_value.is_null() {
+                CFRelease(attr_value);
+            }
+            return None;
+        }
+
         let system_wide = AXUIElementCreateSystemWide();
         if system_wide.is_null() {
+            CFRelease(attr_focused);
+            CFRelease(attr_role);
+            CFRelease(attr_value);
             return None;
         }
 
         let mut focused: *mut c_void = ptr::null_mut();
-        let err =
-            AXUIElementCopyAttributeValue(system_wide, kAXFocusedUIElementAttribute, &mut focused);
+        let err = AXUIElementCopyAttributeValue(system_wide, attr_focused, &mut focused);
         if err != 0 || focused.is_null() {
+            CFRelease(attr_focused);
+            CFRelease(attr_role);
+            CFRelease(attr_value);
             CFRelease(system_wide);
             return None;
         }
 
         let mut role_ref: *mut c_void = ptr::null_mut();
         let mut is_secure = false;
-        if AXUIElementCopyAttributeValue(focused, kAXRoleAttribute, &mut role_ref) == 0
+        if AXUIElementCopyAttributeValue(focused, attr_role, &mut role_ref) == 0
             && !role_ref.is_null()
         {
             if let Some(role) = cf_string_to_rust(role_ref) {
@@ -101,11 +133,14 @@ fn read_focused_value() -> Option<(String, bool)> {
         if is_secure {
             CFRelease(focused);
             CFRelease(system_wide);
+            CFRelease(attr_focused);
+            CFRelease(attr_role);
+            CFRelease(attr_value);
             return Some((String::new(), true));
         }
 
         let mut value_ref: *mut c_void = ptr::null_mut();
-        let err2 = AXUIElementCopyAttributeValue(focused, kAXValueAttribute, &mut value_ref);
+        let err2 = AXUIElementCopyAttributeValue(focused, attr_value, &mut value_ref);
         let value = if err2 == 0 && !value_ref.is_null() {
             cf_string_to_rust(value_ref)
         } else {
@@ -116,6 +151,9 @@ fn read_focused_value() -> Option<(String, bool)> {
         }
         CFRelease(focused);
         CFRelease(system_wide);
+        CFRelease(attr_focused);
+        CFRelease(attr_role);
+        CFRelease(attr_value);
         value.map(|v| (v, false))
     }
 }
