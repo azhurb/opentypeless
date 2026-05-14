@@ -132,7 +132,9 @@ Needs confirmation:
 
 ### Learn From Corrections (macOS, experimental)
 
-Off by default. When enabled (Settings → Dictionary → "Learn from corrections"), OpenTypeless watches the focused text field via macOS Accessibility for ~15 s after each dictation. If the user replaces exactly one word inside the typed span with a proper-noun-shaped replacement (capitalized, camelCase, all-caps acronym, or alphanumeric brand), the new word is added to the dictionary optimistically and a 5 s Undo toast appears in the capsule overlay. The watcher skips `AXSecureTextField` (password fields) and never logs field values. Implementation lives in `src-tauri/src/correction/`; frontend toast in `src/components/Capsule/CorrectionToast.tsx`.
+Off by default. When enabled (Settings → Dictionary → "Learn from corrections"), OpenTypeless watches the focused text field via macOS Accessibility for ~15 s after each dictation. If the user replaces exactly one word inside the typed span with a proper-noun-shaped replacement (capitalized, camelCase, all-caps acronym, or alphanumeric brand), the new word is added to the dictionary optimistically and a 5 s Undo toast appears in the capsule overlay. The toast reads *Replaced "Vladislav" with "Vlad"* — showing both the STT-produced word and the user's correction. The watcher skips `AXSecureTextField` (password fields) and never logs field values. Implementation lives in `src-tauri/src/correction/`; frontend toast in `src/components/Capsule/CorrectionToast.tsx`.
+
+Auto-learned rows in Settings → Dictionary show a subtle Sparkles icon next to the word; hovering surfaces the STT-produced word the user replaced. See [Storage → Dictionary](../architecture/storage.md#dictionary-dictionarystore) for the underlying `source`/`observed_source` columns.
 
 ## Privacy And Local-First BYOK
 
