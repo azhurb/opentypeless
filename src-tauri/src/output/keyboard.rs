@@ -9,11 +9,22 @@ const TYPE_CHUNK_SIZE: usize = 200;
 /// Delay between typing chunks.
 const TYPE_CHUNK_DELAY_MS: u64 = 5;
 
+/// Collapse CR, CRLF, and Unicode line/paragraph separators to '\n' so they
+/// can't leak through enigo.text() and be interpreted as a Return keypress
+/// (which would auto-submit web forms / chat composers mid-dictation).
+fn normalize_for_typing(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r',    "\n")
+        .replace('\u{2028}', "\n")
+        .replace('\u{2029}', "\n")
+}
+
 /// Type a single string into the foreground app via the given Enigo handle.
 /// Splits on '\n' and inserts Shift+Return between line segments to produce a
 /// soft newline (most editors accept this, while bare Return tends to submit).
 fn type_string(enigo: &mut Enigo, text: &str) -> Result<()> {
-    let lines: Vec<&str> = text.split('\n').collect();
+    let normalized = normalize_for_typing(text);
+    let lines: Vec<&str> = normalized.split('\n').collect();
     for (i, line) in lines.iter().enumerate() {
         if !line.is_empty() {
             for chunk in line.chars().collect::<Vec<_>>().chunks(TYPE_CHUNK_SIZE) {
@@ -83,4 +94,13 @@ impl TextOutput for KeyboardOutput {
     fn mode(&self) -> OutputMode {
         OutputMode::Keyboard
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test] fn normalize_strips_crlf()                      { assert_eq!(normalize_for_typing("a\r\nb"), "a\nb"); }
+    #[test] fn normalize_strips_bare_cr()                    { assert_eq!(normalize_for_typing("a\rb"),   "a\nb"); }
+    #[test] fn normalize_strips_unicode_line_separators()    { assert_eq!(normalize_for_typing("a\u{2028}b\u{2029}c"), "a\nb\nc"); }
 }
