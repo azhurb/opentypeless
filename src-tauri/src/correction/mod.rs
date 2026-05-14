@@ -40,8 +40,16 @@ impl CorrectionHandle {
     }
 }
 
+#[cfg(not(test))]
 const POLL_INTERVAL_MS: u64 = 1000;
+#[cfg(test)]
+const POLL_INTERVAL_MS: u64 = 50;
+
+#[cfg(not(test))]
 const WATCH_DURATION_MS: u64 = 15_000;
+#[cfg(test)]
+const WATCH_DURATION_MS: u64 = 2_000;
+
 const AUTO_CONFIRM_MS: u32 = 5_000;
 
 pub fn spawn<F>(
@@ -78,6 +86,7 @@ async fn run<F>(
     };
 
     let started = std::time::Instant::now();
+    // Relaxed: cancellation is eventual; the next poll cycle picks it up.
     while !cancelled.load(Ordering::Relaxed)
         && started.elapsed() < Duration::from_millis(WATCH_DURATION_MS)
     {
@@ -133,14 +142,12 @@ mod tests {
 
     struct FakeField {
         snaps: Mutex<Vec<FieldSnapshot>>,
-        focused: AtomicBool,
     }
 
     impl FakeField {
         fn new(snaps: Vec<FieldSnapshot>) -> Arc<Self> {
             Arc::new(Self {
                 snaps: Mutex::new(snaps),
-                focused: AtomicBool::new(true),
             })
         }
     }
@@ -150,9 +157,6 @@ mod tests {
             self.snaps.lock().unwrap().first().cloned()
         }
         fn current(&self, _baseline: &FieldSnapshot) -> Option<FieldSnapshot> {
-            if !self.focused.load(Ordering::Relaxed) {
-                return None;
-            }
             let mut s = self.snaps.lock().unwrap();
             if s.len() > 1 {
                 let _ = s.remove(0);
@@ -201,7 +205,7 @@ mod tests {
                 let _ = tx.send(s);
             },
         );
-        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(3)))
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(500)))
             .await
             .unwrap()
             .expect("watcher must emit a suggestion");
@@ -222,7 +226,7 @@ mod tests {
         let _h = spawn(field, dict, "Tim ".to_string(), move |s| {
             let _ = tx.send(s);
         });
-        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(2)))
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(300)))
             .await
             .unwrap();
         assert!(got.is_err(), "secure field must not trigger suggestion");
@@ -236,7 +240,7 @@ mod tests {
         let _h = spawn(field, dict, "Tim ".to_string(), move |s| {
             let _ = tx.send(s);
         });
-        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(2)))
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(2500)))
             .await
             .unwrap();
         assert!(got.is_err(), "no change must not trigger suggestion");
@@ -254,7 +258,7 @@ mod tests {
             let _ = tx.send(s);
         });
         h.cancel();
-        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(2)))
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(300)))
             .await
             .unwrap();
         assert!(got.is_err(), "cancelled watcher must not emit");
