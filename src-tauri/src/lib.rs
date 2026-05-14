@@ -495,14 +495,14 @@ async fn clear_history(state: tauri::State<'_, storage::HistoryStore>) -> Result
 
 #[tauri::command]
 async fn get_dictionary(
-    state: tauri::State<'_, storage::DictionaryStore>,
+    state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
 ) -> Result<Vec<storage::DictionaryEntry>, String> {
     state.list().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn add_dictionary_entry(
-    state: tauri::State<'_, storage::DictionaryStore>,
+    state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
     word: String,
     pronunciation: Option<String>,
 ) -> Result<(), String> {
@@ -527,10 +527,18 @@ async fn add_dictionary_entry(
 
 #[tauri::command]
 async fn remove_dictionary_entry(
-    state: tauri::State<'_, storage::DictionaryStore>,
+    state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
     id: i64,
 ) -> Result<(), String> {
     state.remove(id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn correction_undo(
+    state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
+    row_id: i64,
+) -> Result<(), String> {
+    state.remove(row_id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1011,8 +1019,10 @@ pub fn run() {
             let config_manager = storage::ConfigManager::new(app_handle.clone());
             let history_store = storage::HistoryStore::new(db_path.clone())
                 .map_err(|e| anyhow::anyhow!("Failed to init history store: {}", e))?;
-            let dictionary_store = storage::DictionaryStore::new(db_path)
-                .map_err(|e| anyhow::anyhow!("Failed to init dictionary store: {}", e))?;
+            let dictionary_store = std::sync::Arc::new(
+                storage::DictionaryStore::new(db_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to init dictionary store: {}", e))?,
+            );
             let pipeline_handle = pipeline::PipelineHandle::new(app_handle.clone());
 
             // Load initial config to get hotkey
@@ -1278,6 +1288,7 @@ pub fn run() {
             get_dictionary,
             add_dictionary_entry,
             remove_dictionary_entry,
+            correction_undo,
             update_hotkey,
             pause_hotkey,
             resume_hotkey,

@@ -94,6 +94,11 @@ export async function removeDictionaryEntry(id: number): Promise<void> {
   return invoke('remove_dictionary_entry', { id })
 }
 
+// Corrections
+export async function correctionUndo(rowId: number): Promise<void> {
+  return invoke('correction_undo', { rowId })
+}
+
 // Auto-start
 export async function setAutoStart(enabled: boolean): Promise<void> {
   return invoke('set_auto_start', { enabled })
