@@ -49,12 +49,25 @@ export function useCapsuleResize() {
   const correctionSuggestion = useAppStore((s) => s.correctionSuggestion)
   const initialized = useRef(false)
   const prevWindowSize = useRef<{ width: number; height: number } | null>(null)
-  const prevState = useRef<PipelineState>('idle')
-  const prevAutoHide = useRef(false)
   const prevCorrectionPresent = useRef(false)
+  const prevVisible = useRef(false)
 
   const hasError = pipelineError !== null
   const hasCorrectionToast = correctionSuggestion !== null
+
+  // Single source of truth for capsule visibility. Anything that needs the
+  // capsule on screen flips this to true; auto-hide takes over only in pure
+  // idle with no overlays. Driving show/hide off a derived predicate means
+  // *any* trigger flipping the answer dispatches the right action — toast
+  // clearing, error timing out, and pipeline transitions all flow through
+  // the same path.
+  const shouldBeVisible =
+    !capsuleAutoHide
+    || pipelineState !== 'idle'
+    || hasError
+    || hasCorrectionToast
+    || contextMenuOpen
+    || capsuleExpanded
 
   useEffect(() => {
     const size = getSizeForState(
@@ -110,40 +123,14 @@ export function useCapsuleResize() {
             await win.setPosition(new LogicalPosition(x, y)).catch(() => {})
           }
 
-          // Auto-hide: show window when leaving idle, hide when entering idle
-          const becameIdle = prevState.current !== 'idle' && pipelineState === 'idle'
-          const leftIdle = prevState.current === 'idle' && pipelineState !== 'idle'
-          prevState.current = pipelineState
-
-          // A correction toast just appeared — make sure the capsule is on the
-          // monitor where the user is currently editing, and show it if hidden.
+          const wasVisible = prevVisible.current
+          const becomingVisible = shouldBeVisible && !wasVisible
+          const becomingHidden = !shouldBeVisible && wasVisible
+          // Even when auto-hide is off (window already on screen), a brand-new
+          // correction toast should jump to whichever monitor the user is
+          // currently editing on.
           const correctionAppeared = !prevCorrectionPresent.current && hasCorrectionToast
           prevCorrectionPresent.current = hasCorrectionToast
-          if (correctionAppeared && initialized.current) {
-            await placeBottomCenterOfActiveMonitor()
-            await win.show().catch(() => {})
-          }
-
-          if (capsuleAutoHide && !contextMenuOpen && !capsuleExpanded) {
-            if (leftIdle) {
-              // Reposition first (while still hidden) so it appears on the
-              // monitor where the user is now, not where it last sat.
-              await placeBottomCenterOfActiveMonitor()
-              await win.show().catch(() => {})
-            } else if (becameIdle && initialized.current && !hasCorrectionToast) {
-              // Hide window when returning to idle (after initial mount).
-              // Skipped when a correction toast is up so the toast stays visible.
-              await win.hide().catch(() => {})
-              prevAutoHide.current = capsuleAutoHide
-              return
-            }
-          }
-
-          // If auto-hide was just disabled and we're idle, show the capsule
-          if (prevAutoHide.current && !capsuleAutoHide && pipelineState === 'idle') {
-            await win.show().catch(() => {})
-          }
-          prevAutoHide.current = capsuleAutoHide
 
           if (!initialized.current) {
             // Wait for the persisted config to load before deciding whether to
@@ -155,18 +142,31 @@ export function useCapsuleResize() {
             // First mount: size, position on the cursor's monitor, then show
             await win.setSize(new LogicalSize(windowWidth, windowHeight)).catch(() => {})
             await placeBottomCenterOfActiveMonitor()
-            if (capsuleAutoHide) {
+            if (shouldBeVisible) {
+              await win.show().catch(() => {})
+            } else {
               // Belt-and-braces: tauri.conf.json marks the capsule
               // `visible: false`, but on macOS the setSize/setPosition calls
               // above can briefly surface the window before any show() call.
-              // Re-asserting hidden here is a no-op when the OS already kept
-              // it hidden, and pulls it back when it didn't.
               await win.hide().catch(() => {})
-            } else {
-              await win.show().catch(() => {})
             }
             initialized.current = true
             prevWindowSize.current = { width: windowWidth, height: windowHeight }
+            prevVisible.current = shouldBeVisible
+            return
+          }
+
+          prevVisible.current = shouldBeVisible
+
+          if (becomingVisible || (correctionAppeared && shouldBeVisible)) {
+            // Reposition first (possibly still hidden) so the window appears on
+            // the monitor where the user is now, not where it last sat.
+            await placeBottomCenterOfActiveMonitor()
+            await win.show().catch(() => {})
+          }
+
+          if (becomingHidden) {
+            await win.hide().catch(() => {})
             return
           }
 
@@ -210,6 +210,7 @@ export function useCapsuleResize() {
     configLoaded,
     setContextMenuReady,
     hasCorrectionToast,
+    shouldBeVisible,
   ])
 
   return getSizeForState(

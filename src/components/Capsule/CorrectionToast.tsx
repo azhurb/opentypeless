@@ -11,6 +11,7 @@ export function CorrectionToast() {
   const suggestion = useAppStore((s) => s.correctionSuggestion)
   const clearSuggestion = useAppStore((s) => s.setCorrectionSuggestion)
   const pipelineState = useAppStore((s) => s.pipelineState)
+  const pipelineError = useAppStore((s) => s.pipelineError)
   const { t } = useTranslation()
   const [progress, setProgress] = useState(0)
   const [mode, setMode] = useState<Mode>('idle')
@@ -19,13 +20,16 @@ export function CorrectionToast() {
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const undoInFlightRef = useRef(false)
 
+  const hasError = pipelineError !== null
+  // Errors take precedence over the correction toast. Drop the suggestion
+  // when an error appears so the two pills don't overlap.
   useEffect(() => {
-    if (suggestion && pipelineState !== 'idle') {
+    if (suggestion && (pipelineState !== 'idle' || hasError)) {
       clearSuggestion(null)
       setMode('idle')
       setProgress(0)
     }
-  }, [pipelineState, suggestion, clearSuggestion])
+  }, [pipelineState, suggestion, hasError, clearSuggestion])
 
   useEffect(() => {
     if (!suggestion || mode !== 'idle') return
@@ -87,7 +91,7 @@ export function CorrectionToast() {
 
   return (
     <AnimatePresence>
-      {suggestion && (
+      {suggestion && !hasError && (
         <motion.div
           initial={{ opacity: 0, y: 8, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
