@@ -246,12 +246,6 @@ impl DictionaryStore {
         Ok(conn.last_insert_rowid())
     }
 
-    pub async fn contains_case_insensitive(&self, word: &str) -> bool {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let q = "SELECT 1 FROM dictionary WHERE LOWER(word) = LOWER(?1) LIMIT 1";
-        conn.query_row(q, rusqlite::params![word], |_| Ok(())).is_ok()
-    }
-
     pub async fn remove(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
@@ -325,13 +319,4 @@ mod dictionary_tests {
         assert!(listed.iter().any(|e| e.id == id2 && e.word == "Tim"));
     }
 
-    #[tokio::test]
-    async fn contains_case_insensitive_finds_matches() {
-        let store = temp_store();
-        store.add("Tim", None).await.unwrap();
-        assert!(store.contains_case_insensitive("tim").await);
-        assert!(store.contains_case_insensitive("TIM").await);
-        assert!(store.contains_case_insensitive("Tim").await);
-        assert!(!store.contains_case_insensitive("Tom").await);
-    }
 }

@@ -520,7 +520,7 @@ async fn add_dictionary_entry(
     state
         .add(&word, pronunciation.as_deref())
         .await
-        .map(|_id| ())
+        .map(|_| ())
         .map_err(|e| e.to_string())
 }
 
