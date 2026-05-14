@@ -135,6 +135,21 @@ async fn run<F>(
     }
 }
 
+#[cfg(target_os = "macos")]
+pub mod ax_macos;
+#[cfg(not(target_os = "macos"))]
+pub mod ax_stub;
+
+#[cfg(target_os = "macos")]
+pub fn current_platform_field() -> Option<Arc<dyn FocusedField>> {
+    Some(Arc::new(ax_macos::MacOsFocusedField::new()))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn current_platform_field() -> Option<Arc<dyn FocusedField>> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
