@@ -13,7 +13,6 @@ extern "C" {
         attribute: *mut c_void,
         out_value: *mut *mut c_void,
     ) -> i32;
-    fn AXIsProcessTrusted() -> u8;
 
     static kAXFocusedUIElementAttribute: *mut c_void;
     static kAXValueAttribute: *mut c_void;
@@ -70,7 +69,7 @@ unsafe fn cf_string_to_rust(cf: *mut c_void) -> Option<String> {
 /// on success — when `is_secure`, value is empty.
 fn read_focused_value() -> Option<(String, bool)> {
     unsafe {
-        if AXIsProcessTrusted() == 0 {
+        if !crate::pipeline::is_accessibility_trusted() {
             return None;
         }
         let system_wide = AXUIElementCreateSystemWide();
@@ -132,7 +131,7 @@ impl FocusedField for MacOsFocusedField {
                 is_secure: true,
             });
         }
-        let (typed_start, typed_end) = match value.rfind(typed_text) {
+        let (typed_start, typed_end) = match value.find(typed_text) {
             Some(start) => (start, start + typed_text.len()),
             None => (0, 0),
         };
