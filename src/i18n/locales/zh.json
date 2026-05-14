@@ -138,9 +138,8 @@
     "add": "添加",
     "noEntries": "暂无条目。添加专有名词以提高识别准确度。",
     "learnFromCorrections": {
-      "label": "Learn from corrections (macOS, experimental)",
-      "description": "After dictation, OpenTypeless watches your edits for ~15 s and offers to add fixed names and terms here. Reads the focused text field via macOS Accessibility — already granted for keyboard output.",
-      "macOnly": "macOS only for now"
+      "label": "Learn from corrections (experimental)",
+      "description": "After dictation, OpenTypeless watches your edits for ~15 s and offers to add fixed names and terms here. Reads the focused text field via Accessibility — already granted for keyboard output."
     },
     "failedToAdd": "添加词典条目失败",
     "failedToRemove": "删除词典条目失败",
