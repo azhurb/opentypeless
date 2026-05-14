@@ -185,7 +185,7 @@ pub struct PipelineHandle {
     preloaded_dictionary: Arc<Mutex<Option<Vec<String>>>>,
     preloaded_selected_text: Arc<Mutex<Option<String>>>,
     recording_start: Arc<Mutex<Option<std::time::Instant>>>,
-    pub current_correction: Arc<Mutex<Option<crate::correction::CorrectionHandle>>>,
+    pub(crate) current_correction: Arc<Mutex<Option<crate::correction::CorrectionHandle>>>,
     shared_client: reqwest::Client,
     /// Serializes start()/stop() so that stop() waits for start() to finish
     /// its setup before reading shared state (preloaded_config, audio_handle, etc.).
