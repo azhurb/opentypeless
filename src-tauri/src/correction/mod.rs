@@ -86,6 +86,12 @@ async fn run<F>(
     };
 
     let started = std::time::Instant::now();
+    // Debounce: only act on a candidate substitution once the field has been
+    // stable (same value) for at least one full poll cycle. Without this, the
+    // watcher would catch intermediate states while the user is mid-edit —
+    // e.g., backspacing "Vladislav" → "Vlad" we'd otherwise commit "Vladi"
+    // because that's what the field briefly showed.
+    let mut pending_value: Option<String> = None;
     // Relaxed: cancellation is eventual; the next poll cycle picks it up.
     while !cancelled.load(Ordering::Relaxed)
         && started.elapsed() < Duration::from_millis(WATCH_DURATION_MS)
@@ -99,10 +105,21 @@ async fn run<F>(
             _ => return,
         };
         if cur.value == baseline.value {
+            // User reverted (or hasn't started editing). Reset the debounce.
+            pending_value = None;
+            continue;
+        }
+        let stable = matches!(&pending_value, Some(prev) if prev == &cur.value);
+        if !stable {
+            tracing::debug!(
+                "correction: change detected but waiting for stability (current_len={})",
+                cur.value.len()
+            );
+            pending_value = Some(cur.value.clone());
             continue;
         }
         tracing::debug!(
-            "correction: change detected (baseline_len={}, current_len={})",
+            "correction: stable change (baseline_len={}, current_len={})",
             baseline.value.len(),
             cur.value.len()
         );
@@ -274,6 +291,40 @@ mod tests {
             .await
             .unwrap();
         assert!(got.is_err(), "no change must not trigger suggestion");
+    }
+
+    #[tokio::test]
+    async fn waits_for_stable_value_before_emitting() {
+        // Backspace-by-character simulation: field passes through several
+        // intermediate values before settling on the final one. Without
+        // debouncing the watcher would fire on the first intermediate; with
+        // debouncing it waits until the final value has been seen twice.
+        let field = FakeField::new(vec![
+            mk("Hello Vladislav ", "Hello Vladislav "),
+            mk("Hello Vladisl ", "Hello Vladislav "),
+            mk("Hello Vladi ", "Hello Vladislav "),
+            mk("Hello Vlad ", "Hello Vladislav "),
+            mk("Hello Vlad ", "Hello Vladislav "),
+        ]);
+        let dict = temp_store();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _h = spawn(
+            field,
+            dict.clone(),
+            "Hello Vladislav ".to_string(),
+            move |s| {
+                let _ = tx.send(s);
+            },
+        );
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(800)))
+            .await
+            .unwrap()
+            .expect("watcher must emit a suggestion after the value stabilises");
+        assert_eq!(got.old, "Vladislav");
+        assert_eq!(
+            got.new, "Vlad",
+            "must wait for the stable final value, not an intermediate"
+        );
     }
 
     #[tokio::test]
