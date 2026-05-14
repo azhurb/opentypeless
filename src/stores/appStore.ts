@@ -63,6 +63,7 @@ export interface AppConfig {
   max_recording_seconds: number
   ui_language: string
   capsule_auto_hide: boolean
+  learn_from_corrections_enabled: boolean
 }
 
 export type TestStatus = 'idle' | 'testing' | 'success' | 'error'
@@ -174,6 +175,7 @@ const defaultConfig: AppConfig = {
   max_recording_seconds: 30,
   ui_language: 'en',
   capsule_auto_hide: false,
+  learn_from_corrections_enabled: false,
 }
 
 export const useAppStore = create<AppState>((set) => ({

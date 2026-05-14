@@ -28,6 +28,7 @@ pub struct AppConfig {
     pub max_recording_seconds: u32,
     pub ui_language: String,
     pub capsule_auto_hide: bool,
+    pub learn_from_corrections_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -56,6 +57,7 @@ impl Default for AppConfig {
             max_recording_seconds: 30,
             ui_language: "en".to_string(),
             capsule_auto_hide: false,
+            learn_from_corrections_enabled: false,
         }
     }
 }
@@ -235,13 +237,19 @@ impl DictionaryStore {
         })
     }
 
-    pub async fn add(&self, word: &str, pronunciation: Option<&str>) -> Result<()> {
+    pub async fn add(&self, word: &str, pronunciation: Option<&str>) -> Result<i64> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
             "INSERT INTO dictionary (word, pronunciation) VALUES (?1, ?2)",
             rusqlite::params![word, pronunciation],
         )?;
-        Ok(())
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub async fn contains_case_insensitive(&self, word: &str) -> bool {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let q = "SELECT 1 FROM dictionary WHERE LOWER(word) = LOWER(?1) LIMIT 1";
+        conn.query_row(q, rusqlite::params![word], |_| Ok(())).is_ok()
     }
 
     pub async fn remove(&self, id: i64) -> Result<()> {
@@ -281,5 +289,49 @@ impl DictionaryStore {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|r| r.ok()).collect()
+    }
+}
+
+#[cfg(test)]
+mod dictionary_tests {
+    use super::*;
+
+    fn uuid_like() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        format!("{}-{}", nanos, N.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn temp_store() -> DictionaryStore {
+        let dir = std::env::temp_dir().join(format!("otl-dict-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("dict-{}.db", uuid_like()));
+        DictionaryStore::new(path).unwrap()
+    }
+
+    #[tokio::test]
+    async fn add_returns_new_row_id() {
+        let store = temp_store();
+        let id1 = store.add("Timmy", None).await.unwrap();
+        let id2 = store.add("Tim", None).await.unwrap();
+        assert!(id2 > id1, "row ids must monotonically increase");
+        let listed = store.list().await.unwrap();
+        assert!(listed.iter().any(|e| e.id == id1 && e.word == "Timmy"));
+        assert!(listed.iter().any(|e| e.id == id2 && e.word == "Tim"));
+    }
+
+    #[tokio::test]
+    async fn contains_case_insensitive_finds_matches() {
+        let store = temp_store();
+        store.add("Tim", None).await.unwrap();
+        assert!(store.contains_case_insensitive("tim").await);
+        assert!(store.contains_case_insensitive("TIM").await);
+        assert!(store.contains_case_insensitive("Tim").await);
+        assert!(!store.contains_case_insensitive("Tom").await);
     }
 }
