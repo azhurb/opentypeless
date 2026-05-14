@@ -263,11 +263,27 @@ impl DictionaryStore {
         })
     }
 
-    pub async fn add(&self, word: &str, pronunciation: Option<&str>) -> Result<i64> {
+    /// Insert a manually-added entry (Settings → Dictionary "Add" button).
+    /// frequency_used=0, last_used=NULL, source='manual', observed_source=NULL.
+    pub async fn add_manual(&self, word: &str, pronunciation: Option<&str>) -> Result<i64> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
-            "INSERT INTO dictionary (word, pronunciation) VALUES (?1, ?2)",
+            "INSERT INTO dictionary (word, pronunciation, source, observed_source, frequency_used, last_used)
+             VALUES (?1, ?2, 'manual', NULL, 0, NULL)",
             rusqlite::params![word, pronunciation],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Insert an auto-learned entry from a single-word correction.
+    /// `observed_source` is the STT-produced word the user replaced.
+    /// frequency_used=1 (this edit counts as the first use), last_used=CURRENT_TIMESTAMP.
+    pub async fn add_learned(&self, word: &str, observed_source: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "INSERT INTO dictionary (word, pronunciation, source, observed_source, frequency_used, last_used)
+             VALUES (?1, NULL, 'user_edits', ?2, 1, CURRENT_TIMESTAMP)",
+            rusqlite::params![word, observed_source],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -342,14 +358,41 @@ mod dictionary_tests {
     }
 
     #[tokio::test]
-    async fn add_returns_new_row_id() {
+    async fn add_manual_inserts_with_manual_source() {
         let store = temp_store();
-        let id1 = store.add("Timmy", None).await.unwrap();
-        let id2 = store.add("Tim", None).await.unwrap();
+        let id = store.add_manual("Tim", Some("tihm")).await.unwrap();
+        let listed = store.list().await.unwrap();
+        let entry = listed.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(entry.word, "Tim");
+        assert_eq!(entry.pronunciation.as_deref(), Some("tihm"));
+        assert_eq!(entry.source, "manual");
+        assert!(entry.observed_source.is_none());
+        assert_eq!(entry.frequency_used, 0);
+        assert!(entry.last_used.is_none());
+    }
+
+    #[tokio::test]
+    async fn add_learned_inserts_with_observed_source_and_initial_use() {
+        let store = temp_store();
+        let id = store.add_learned("Vlad", "Vladislav").await.unwrap();
+        let listed = store.list().await.unwrap();
+        let entry = listed.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(entry.word, "Vlad");
+        assert!(entry.pronunciation.is_none());
+        assert_eq!(entry.source, "user_edits");
+        assert_eq!(entry.observed_source.as_deref(), Some("Vladislav"));
+        assert_eq!(entry.frequency_used, 1);
+        assert!(entry.last_used.is_some(), "add_learned must stamp last_used");
+    }
+
+    #[tokio::test]
+    async fn add_methods_return_monotonic_row_ids() {
+        let store = temp_store();
+        let id1 = store.add_manual("Timmy", None).await.unwrap();
+        let id2 = store.add_learned("Tim", "Timmy").await.unwrap();
         assert!(id2 > id1, "row ids must monotonically increase");
         let listed = store.list().await.unwrap();
-        assert!(listed.iter().any(|e| e.id == id1 && e.word == "Timmy"));
-        assert!(listed.iter().any(|e| e.id == id2 && e.word == "Tim"));
+        assert_eq!(listed.len(), 2);
     }
 
     #[tokio::test]

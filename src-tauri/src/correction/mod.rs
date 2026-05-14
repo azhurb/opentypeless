@@ -149,7 +149,7 @@ async fn run<F>(
             tracing::debug!("correction: classifier rejected candidate");
             continue;
         }
-        let row_id = match dictionary.add(&sub.new, None).await {
+        let row_id = match dictionary.add_learned(&sub.new, &sub.old).await {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!("dictionary insert failed during correction: {}", e);
@@ -260,7 +260,14 @@ mod tests {
         assert_eq!(got.new, "Tim");
         assert_eq!(got.auto_confirm_ms, 5_000);
         let listed = dict.list().await.unwrap();
-        assert!(listed.iter().any(|e| e.id == got.row_id && e.word == "Tim"));
+        let learned = listed
+            .iter()
+            .find(|e| e.id == got.row_id && e.word == "Tim")
+            .expect("learned row missing");
+        assert_eq!(learned.source, "user_edits");
+        assert_eq!(learned.observed_source.as_deref(), Some("Timmy"));
+        assert_eq!(learned.frequency_used, 1);
+        assert!(learned.last_used.is_some(), "watcher must stamp last_used");
     }
 
     #[tokio::test]

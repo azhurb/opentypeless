@@ -519,7 +519,7 @@ async fn add_dictionary_entry(
         }
     }
     state
-        .add(&word, pronunciation.as_deref())
+        .add_manual(&word, pronunciation.as_deref())
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())

@@ -79,7 +79,17 @@ describe('appStore', () => {
     })
 
     it('setDictionary replaces dictionary', () => {
-      const entries: DictionaryEntry[] = [{ id: 1, word: 'API', pronunciation: null }]
+      const entries: DictionaryEntry[] = [
+        {
+          id: 1,
+          word: 'API',
+          pronunciation: null,
+          source: 'manual',
+          observed_source: null,
+          frequency_used: 0,
+          last_used: null,
+        },
+      ]
       getState().setDictionary(entries)
       expect(getState().dictionary).toHaveLength(1)
       expect(getState().dictionary[0].word).toBe('API')

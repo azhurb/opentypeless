@@ -40,6 +40,10 @@ export interface DictionaryEntry {
   id: number
   word: string
   pronunciation: string | null
+  source: string
+  observed_source: string | null
+  frequency_used: number
+  last_used: string | null
 }
 
 export interface AppConfig {
