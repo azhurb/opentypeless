@@ -41,10 +41,8 @@ impl CorrectionHandle {
     }
 }
 
-// Wispr Flow uses exactly 1.0 s (`DispatchTimeInterval.seconds(1)`, verified
-// via static disassembly of their Swift helper — see
-// .scratch-wispr/findings/02-swift-helper.md). 1 s is also frugal on CPU and
-// AX traffic; the toast is a 5 s auto-confirm so reaction time is fine.
+// 1 s is frugal on CPU and AX traffic, and the toast is a 5 s auto-confirm
+// so reaction time is fine. Anything faster doesn't help users perceptibly.
 #[cfg(not(test))]
 const POLL_INTERVAL_MS: u64 = 1000;
 #[cfg(test)]
@@ -122,9 +120,8 @@ async fn run<F>(
     let mut pending_value: Option<String> = None;
     // Latest cur.value that differed from baseline. If WATCH_DURATION elapses
     // without an emit, the timeout-emit path tries the degenerate (full-string
-    // compare) diff one last time on this value. Mirrors Wispr's verified
-    // timeout behavior — their 60 s watchdog calls the same emit helper as the
-    // success path, see .scratch-wispr/findings/02-swift-helper.md.
+    // compare) diff one last time on this value, so edits that defeat the
+    // boundary anchors aren't silently lost.
     let mut last_changed: Option<String> = None;
     while !cancelled.load(Ordering::Relaxed)
         && started.elapsed() < Duration::from_millis(WATCH_DURATION_MS)
@@ -171,9 +168,9 @@ async fn run<F>(
         }
     }
     // Watch window elapsed. One last attempt on the latest-seen edited value
-    // using the more permissive degenerate diff path. This is Wispr's safety
-    // net for cases where the boundary anchors never realign (e.g., user edits
-    // the suffix context, or single-word dictation with no surrounding text).
+    // using the more permissive degenerate diff path — a safety net for cases
+    // where the boundary anchors never realign (e.g., user edits the suffix
+    // context, or single-word dictation with no surrounding text).
     if cancelled.load(Ordering::Relaxed) {
         return;
     }

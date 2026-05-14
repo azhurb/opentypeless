@@ -625,8 +625,7 @@ async fn resume_hotkey(
 ///   1. Swap the object's class from `NSWindow` to `NSPanel` and OR
 ///      `NSWindowStyleMaskNonactivatingPanel` into the style mask. macOS
 ///      excludes regular `NSWindow`s from foreign fullscreen Spaces; only
-///      `NSPanel` with the nonactivating style is allowed (this is the same
-///      mechanism Wispr Flow's separate helper bundle uses).
+///      `NSPanel` with the nonactivating style is allowed.
 ///   2. OR `NSWindowCollectionBehaviorFullScreenAuxiliary` into the collection
 ///      behavior so the panel is allowed to render in fullscreen Spaces.
 ///      `CanJoinAllSpaces` alone is not sufficient on macOS Tahoe.
