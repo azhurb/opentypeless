@@ -11,7 +11,27 @@ pub struct WordSubstitution {
 #[derive(Debug, Clone)]
 enum Tok<'a> {
     Word(&'a str),
-    Other(()),
+    Other,
+}
+
+/// Snap `idx` down to the nearest char boundary (≤ idx).
+fn snap_floor(s: &str, idx: usize) -> usize {
+    let idx = idx.min(s.len());
+    let mut i = idx;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Snap `idx` up to the nearest char boundary (≥ idx).
+fn snap_ceil(s: &str, idx: usize) -> usize {
+    let idx = idx.min(s.len());
+    let mut i = idx;
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 fn is_word_char(c: char) -> bool {
@@ -40,7 +60,7 @@ fn tokenize(s: &str) -> Vec<Tok<'_>> {
         if is_word {
             out.push(Tok::Word(slice));
         } else {
-            out.push(Tok::Other(()));
+            out.push(Tok::Other);
         }
         i = end;
     }
@@ -56,11 +76,11 @@ pub fn find_single_word_substitution(
     let typed_end = base_idx + typed_text.len();
 
     let prefix_anchor = {
-        let start = base_idx.saturating_sub(8);
+        let start = snap_floor(baseline, base_idx.saturating_sub(8));
         &baseline[start..base_idx]
     };
     let suffix_anchor = {
-        let end = (typed_end + 8).min(baseline.len());
+        let end = snap_ceil(baseline, typed_end + 8);
         &baseline[typed_end..end]
     };
 
@@ -83,7 +103,7 @@ pub fn find_single_word_substitution(
         .into_iter()
         .filter_map(|t| match t {
             Tok::Word(w) => Some(w),
-            Tok::Other(_) => None,
+            Tok::Other => None,
         })
         .collect();
     // Collect ALL word tokens from current_span (may include tail after the span).
@@ -91,7 +111,7 @@ pub fn find_single_word_substitution(
         .into_iter()
         .filter_map(|t| match t {
             Tok::Word(w) => Some(w),
-            Tok::Other(_) => None,
+            Tok::Other => None,
         })
         .collect();
 
@@ -205,5 +225,19 @@ mod tests {
             "Hello dear Tim ",
         )
         .is_none());
+    }
+
+    #[test]
+    fn handles_multibyte_chars_near_anchor_boundary() {
+        // ü (U+00FC, 2 bytes) sits at byte offset 8 inside the prefix context.
+        // Without the char-boundary snap, `base_idx.saturating_sub(8)` lands on
+        // ü's second byte and the slice panics.  The space before "Timmy" ensures
+        // the tokenizer can isolate "Timmy" as a distinct word token.
+        let baseline = "aaaaaaa\u{FC} Timmy ";
+        let current  = "aaaaaaa\u{FC} Tim ";
+        // typed_text is only the tail so that base_idx > 0 and the prefix anchor
+        // is built from a region that straddles the multibyte character.
+        let got = find_single_word_substitution(baseline, current, "Timmy ");
+        assert_eq!(got, Some(WordSubstitution { old: "Timmy".into(), new: "Tim".into() }));
     }
 }
