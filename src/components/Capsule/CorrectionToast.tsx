@@ -93,11 +93,11 @@ export function CorrectionToast() {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 8, scale: 0.96 }}
           transition={spring.jellyGentle}
-          className="pointer-events-auto absolute left-1/2 -translate-x-1/2 top-full mt-3 flex items-center gap-3 px-4 py-2.5 bg-black/90 backdrop-blur-sm rounded-full text-white text-[13px] shadow-2xl overflow-hidden"
+          className="pointer-events-auto absolute left-3 right-3 top-1/2 -translate-y-1/2 h-9 flex items-center gap-3 px-4 bg-black/90 backdrop-blur-sm rounded-full text-white text-[13px] shadow-2xl overflow-hidden whitespace-nowrap"
           role="status"
           aria-live="polite"
         >
-          <span className="select-none">
+          <span className="select-none flex-1 min-w-0 truncate">
             {mode === 'undone'
               ? t('correction.removed', { new: suggestion.new })
               : t('correction.added', { new: suggestion.new })}

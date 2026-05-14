@@ -26,6 +26,7 @@ export function Capsule() {
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen)
   const contextMenuReady = useAppStore((s) => s.contextMenuReady)
   const setContextMenuReady = useAppStore((s) => s.setContextMenuReady)
+  const correctionSuggestion = useAppStore((s) => s.correctionSuggestion)
   const { startRecording, stopRecording, isRecording, isProcessing } = useRecording()
 
   const dragStart = useRef<{ x: number; y: number } | null>(null)
@@ -35,6 +36,9 @@ export function Capsule() {
 
   const hasError = pipelineError !== null
   const capsuleState = getCapsuleState(pipelineState, hasError)
+  // While a correction toast is visible in idle mode, the toast takes the whole
+  // capsule window — hide the regular pill so they don't overlap.
+  const showToast = correctionSuggestion !== null && pipelineState === 'idle' && !hasError
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return
@@ -96,36 +100,38 @@ export function Capsule() {
       style={{ background: 'transparent' }}
       onContextMenu={handleContextMenu}
     >
-      {/* Persistent outer shell — jelly capsule */}
-      <motion.div
-        className={`absolute left-3 rounded-full pointer-events-auto shrink-0 ${
-          capsuleState === 'error'
-            ? 'jelly-capsule-error'
-            : capsuleState === 'idle'
-              ? 'jelly-capsule text-neutral-700'
-              : 'jelly-capsule-active text-white'
-        }`}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-      >
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={capsuleState}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-          >
-            {capsuleState === 'idle' && <CapsuleIdle />}
-            {capsuleState === 'recording' && <CapsuleRecording />}
-            {capsuleState === 'transcribing' && <CapsuleProcessing />}
-            {capsuleState === 'polishing' && <CapsulePolishing />}
-            {capsuleState === 'outputting' && <CapsuleComplete />}
-            {capsuleState === 'error' && <CapsuleError />}
-          </motion.div>
-        </AnimatePresence>
-      </motion.div>
+      {/* Persistent outer shell — jelly capsule. Hidden while the toast is up. */}
+      {!showToast && (
+        <motion.div
+          className={`absolute left-3 rounded-full pointer-events-auto shrink-0 ${
+            capsuleState === 'error'
+              ? 'jelly-capsule-error'
+              : capsuleState === 'idle'
+                ? 'jelly-capsule text-neutral-700'
+                : 'jelly-capsule-active text-white'
+          }`}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={capsuleState}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              {capsuleState === 'idle' && <CapsuleIdle />}
+              {capsuleState === 'recording' && <CapsuleRecording />}
+              {capsuleState === 'transcribing' && <CapsuleProcessing />}
+              {capsuleState === 'polishing' && <CapsulePolishing />}
+              {capsuleState === 'outputting' && <CapsuleComplete />}
+              {capsuleState === 'error' && <CapsuleError />}
+            </motion.div>
+          </AnimatePresence>
+        </motion.div>
+      )}
 
       {/* Context menu appears to the right of capsule */}
       {contextMenuOpen && contextMenuReady && (

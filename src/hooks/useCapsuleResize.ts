@@ -11,9 +11,13 @@ function getSizeForState(
   expanded: boolean,
   hasError: boolean,
   contextMenuOpen: boolean,
+  hasCorrectionToast: boolean,
 ): CapsuleSize {
   if (contextMenuOpen) return { width: 220, height: 220 }
   if (hasError) return { width: 200, height: 36 }
+  // Correction toast: wide pill that replaces the idle mic; needs room for
+  // "Added \"<word>\" to your dictionary" plus the Undo button.
+  if (hasCorrectionToast && state === 'idle') return { width: 320, height: 36 }
   if (expanded) return { width: 220, height: 90 }
   switch (state) {
     case 'idle':
@@ -42,15 +46,24 @@ export function useCapsuleResize() {
   const setContextMenuReady = useAppStore((s) => s.setContextMenuReady)
   const capsuleAutoHide = useAppStore((s) => s.config.capsule_auto_hide)
   const configLoaded = useAppStore((s) => s.configLoaded)
+  const correctionSuggestion = useAppStore((s) => s.correctionSuggestion)
   const initialized = useRef(false)
   const prevWindowSize = useRef<{ width: number; height: number } | null>(null)
   const prevState = useRef<PipelineState>('idle')
   const prevAutoHide = useRef(false)
+  const prevCorrectionPresent = useRef(false)
 
   const hasError = pipelineError !== null
+  const hasCorrectionToast = correctionSuggestion !== null
 
   useEffect(() => {
-    const size = getSizeForState(pipelineState, capsuleExpanded, hasError, contextMenuOpen)
+    const size = getSizeForState(
+      pipelineState,
+      capsuleExpanded,
+      hasError,
+      contextMenuOpen,
+      hasCorrectionToast,
+    )
     const windowWidth = size.width + 24
     const windowHeight = size.height + 24
 
@@ -102,14 +115,24 @@ export function useCapsuleResize() {
           const leftIdle = prevState.current === 'idle' && pipelineState !== 'idle'
           prevState.current = pipelineState
 
+          // A correction toast just appeared — make sure the capsule is on the
+          // monitor where the user is currently editing, and show it if hidden.
+          const correctionAppeared = !prevCorrectionPresent.current && hasCorrectionToast
+          prevCorrectionPresent.current = hasCorrectionToast
+          if (correctionAppeared && initialized.current) {
+            await placeBottomCenterOfActiveMonitor()
+            await win.show().catch(() => {})
+          }
+
           if (capsuleAutoHide && !contextMenuOpen && !capsuleExpanded) {
             if (leftIdle) {
               // Reposition first (while still hidden) so it appears on the
               // monitor where the user is now, not where it last sat.
               await placeBottomCenterOfActiveMonitor()
               await win.show().catch(() => {})
-            } else if (becameIdle && initialized.current) {
-              // Hide window when returning to idle (after initial mount)
+            } else if (becameIdle && initialized.current && !hasCorrectionToast) {
+              // Hide window when returning to idle (after initial mount).
+              // Skipped when a correction toast is up so the toast stays visible.
               await win.hide().catch(() => {})
               prevAutoHide.current = capsuleAutoHide
               return
@@ -186,7 +209,14 @@ export function useCapsuleResize() {
     capsuleAutoHide,
     configLoaded,
     setContextMenuReady,
+    hasCorrectionToast,
   ])
 
-  return getSizeForState(pipelineState, capsuleExpanded, hasError, contextMenuOpen)
+  return getSizeForState(
+    pipelineState,
+    capsuleExpanded,
+    hasError,
+    contextMenuOpen,
+    hasCorrectionToast,
+  )
 }

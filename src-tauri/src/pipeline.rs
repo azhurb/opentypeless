@@ -1016,6 +1016,11 @@ impl PipelineHandle {
                             {
                                 tracing::warn!("failed to emit correction:suggest: {}", e);
                             }
+                            // Tell every window the dictionary just changed so the
+                            // Settings → Dictionary list re-fetches without a restart.
+                            if let Err(e) = app_handle.emit("dictionary:changed", ()) {
+                                tracing::warn!("failed to emit dictionary:changed: {}", e);
+                            }
                         },
                     );
                     *self

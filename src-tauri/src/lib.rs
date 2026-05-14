@@ -535,10 +535,15 @@ async fn remove_dictionary_entry(
 
 #[tauri::command]
 async fn correction_undo(
+    app: tauri::AppHandle,
     state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
     row_id: i64,
 ) -> Result<(), String> {
-    state.remove(row_id).await.map_err(|e| e.to_string())
+    state.remove(row_id).await.map_err(|e| e.to_string())?;
+    if let Err(e) = app.emit("dictionary:changed", ()) {
+        tracing::warn!("failed to emit dictionary:changed: {}", e);
+    }
+    Ok(())
 }
 
 #[tauri::command]
