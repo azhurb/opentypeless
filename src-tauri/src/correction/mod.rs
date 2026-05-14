@@ -1,3 +1,4 @@
+pub mod boundary;
 pub mod classify;
 pub mod diff;
 
@@ -41,14 +42,22 @@ impl CorrectionHandle {
 }
 
 #[cfg(not(test))]
-const POLL_INTERVAL_MS: u64 = 1000;
+const POLL_INTERVAL_MS: u64 = 250;
 #[cfg(test)]
-const POLL_INTERVAL_MS: u64 = 50;
+const POLL_INTERVAL_MS: u64 = 25;
 
 #[cfg(not(test))]
-const WATCH_DURATION_MS: u64 = 15_000;
+const WATCH_DURATION_MS: u64 = 60_000;
 #[cfg(test)]
 const WATCH_DURATION_MS: u64 = 2_000;
+
+/// How long to keep retrying the initial snapshot when AX hasn't caught up to
+/// enigo's keystrokes yet (typed_span_found=false). After this, we accept the
+/// degenerate baseline and rely on the watcher's later polls.
+#[cfg(not(test))]
+const SNAPSHOT_RETRY_BUDGET_MS: u64 = 1_500;
+#[cfg(test)]
+const SNAPSHOT_RETRY_BUDGET_MS: u64 = 200;
 
 const AUTO_CONFIRM_MS: u32 = 5_000;
 
@@ -80,19 +89,33 @@ async fn run<F>(
 ) where
     F: FnOnce(CorrectionSuggestion) + Send + 'static,
 {
-    let baseline = match field.snapshot(&typed_text) {
+    // Snapshot retry: AX reads can lag behind enigo's keystroke propagation.
+    // Retry briefly until typed_text is visible in the field value; otherwise
+    // baseline anchors degenerate to an empty prefix/suffix and we fall back
+    // to time-debounce + full-string compare (which still handles dictation
+    // into an empty field correctly).
+    let baseline = match snapshot_with_retry(&*field, &typed_text, &cancelled).await {
         Some(s) if !s.is_secure => s,
         _ => return,
     };
+    let anchors = boundary::extract_anchors(&baseline, &typed_text);
+    tracing::debug!(
+        "correction: anchors prefix_len={} suffix_len={} degenerate={}",
+        anchors.prefix.len(),
+        anchors.suffix.len(),
+        anchors.is_degenerate(),
+    );
 
     let started = std::time::Instant::now();
     // Debounce: only act on a candidate substitution once the field has been
     // stable (same value) for at least one full poll cycle. Without this, the
     // watcher would catch intermediate states while the user is mid-edit —
-    // e.g., backspacing "Vladislav" → "Vlad" we'd otherwise commit "Vladi"
-    // because that's what the field briefly showed.
+    // e.g., backspacing "Vladislav" → "Vlad" we'd otherwise commit "Vladi".
+    // The boundary check (when anchors are non-degenerate) is a stronger
+    // structural signal but doesn't help when dictation is at the field's
+    // end (empty suffix anchor matches anything trailing), so we keep this
+    // debounce as defense-in-depth.
     let mut pending_value: Option<String> = None;
-    // Relaxed: cancellation is eventual; the next poll cycle picks it up.
     while !cancelled.load(Ordering::Relaxed)
         && started.elapsed() < Duration::from_millis(WATCH_DURATION_MS)
     {
@@ -105,7 +128,6 @@ async fn run<F>(
             _ => return,
         };
         if cur.value == baseline.value {
-            // User reverted (or hasn't started editing). Reset the debounce.
             pending_value = None;
             continue;
         }
@@ -118,20 +140,42 @@ async fn run<F>(
             pending_value = Some(cur.value.clone());
             continue;
         }
-        tracing::debug!(
-            "correction: stable change (baseline_len={}, current_len={})",
-            baseline.value.len(),
-            cur.value.len()
-        );
-        let sub = match diff::find_single_word_substitution(
-            &baseline.value,
-            &cur.value,
-            &typed_text,
-        ) {
-            Some(s) => s,
-            None => {
-                tracing::debug!("correction: diff found no single-word substitution");
-                continue;
+        // Stable. Decide which diff path to take.
+        let sub = if anchors.is_degenerate() {
+            tracing::debug!(
+                "correction: stable change, degenerate anchors fallback (baseline_len={}, current_len={})",
+                baseline.value.len(),
+                cur.value.len()
+            );
+            match diff::find_single_word_substitution(&baseline.value, &cur.value, &typed_text) {
+                Some(s) => s,
+                None => {
+                    tracing::debug!("correction: diff found no single-word substitution");
+                    continue;
+                }
+            }
+        } else {
+            let span = match boundary::find_span(&cur.value, &anchors) {
+                Some(r) => r,
+                None => {
+                    tracing::debug!(
+                        "correction: boundaries not aligned (current_len={})",
+                        cur.value.len()
+                    );
+                    continue;
+                }
+            };
+            tracing::debug!(
+                "correction: boundaries aligned, span_len={}",
+                span.len()
+            );
+            let current_span = &cur.value[span];
+            match diff::find_word_substitution_in_spans(&typed_text, current_span) {
+                Some(s) => s,
+                None => {
+                    tracing::debug!("correction: diff found no single-word substitution in span");
+                    continue;
+                }
             }
         };
         tracing::debug!(
@@ -164,6 +208,32 @@ async fn run<F>(
             auto_confirm_ms: AUTO_CONFIRM_MS,
         });
         return;
+    }
+}
+
+async fn snapshot_with_retry(
+    field: &dyn FocusedField,
+    typed_text: &str,
+    cancelled: &Arc<AtomicBool>,
+) -> Option<FieldSnapshot> {
+    let started = std::time::Instant::now();
+    let mut last: Option<FieldSnapshot> = None;
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return None;
+        }
+        let snap = field.snapshot(typed_text)?;
+        if snap.is_secure || snap.typed_end > snap.typed_start {
+            return Some(snap);
+        }
+        last = Some(snap);
+        if started.elapsed() >= Duration::from_millis(SNAPSHOT_RETRY_BUDGET_MS) {
+            tracing::debug!(
+                "correction: snapshot retry budget exhausted, proceeding with degenerate baseline"
+            );
+            return last;
+        }
+        tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS / 2 + 1)).await;
     }
 }
 
@@ -201,7 +271,21 @@ mod tests {
 
     impl FocusedField for FakeField {
         fn snapshot(&self, _typed: &str) -> Option<FieldSnapshot> {
-            self.snaps.lock().unwrap().first().cloned()
+            let mut s = self.snaps.lock().unwrap();
+            // Allow retry tests to provide a sequence where the head represents
+            // a "typed_span_found=false" snapshot that should be skipped.
+            while s.len() > 1 {
+                let head_bad = s
+                    .first()
+                    .map(|f| !f.is_secure && f.typed_end <= f.typed_start)
+                    .unwrap_or(false);
+                if head_bad {
+                    let _ = s.remove(0);
+                } else {
+                    break;
+                }
+            }
+            s.first().cloned()
         }
         fn current(&self, _baseline: &FieldSnapshot) -> Option<FieldSnapshot> {
             let mut s = self.snaps.lock().unwrap();
@@ -226,12 +310,26 @@ mod tests {
     }
 
     fn mk(value: &str, typed: &str) -> FieldSnapshot {
-        let typed_start = value.find(typed).unwrap_or(0);
-        let typed_end = typed_start + typed.len();
+        // Mirrors ax_macos::snapshot's behavior: typed_span_found=false maps
+        // to typed_start=typed_end=0 so the caller can detect the race.
+        let (typed_start, typed_end) = match value.find(typed) {
+            Some(i) => (i, i + typed.len()),
+            None => (0, 0),
+        };
         FieldSnapshot {
             value: value.to_string(),
             typed_start,
             typed_end,
+            is_secure: false,
+        }
+    }
+
+    fn stale_snap(value: &str) -> FieldSnapshot {
+        // Represents an AX read where typed_text wasn't yet visible.
+        FieldSnapshot {
+            value: value.to_string(),
+            typed_start: 0,
+            typed_end: 0,
             is_secure: false,
         }
     }
@@ -331,6 +429,75 @@ mod tests {
         assert_eq!(
             got.new, "Vlad",
             "must wait for the stable final value, not an intermediate"
+        );
+    }
+
+    #[tokio::test]
+    async fn fires_on_single_word_suffix_edit_with_surrounding_context() {
+        // Reproduces the Philip → Philipp smoke-test scenario: the user
+        // dictated "Philip" into a field that already contained "Hi I am ",
+        // then edited the trailing letter.
+        let field = FakeField::new(vec![
+            mk("Hi I am Philip", "Philip"),  // baseline (typed_span_found=true)
+            mk("Hi I am Philipp", "Philip"), // user edited
+            mk("Hi I am Philipp", "Philip"), // stable
+        ]);
+        let dict = temp_store();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _h = spawn(field, dict.clone(), "Philip".to_string(), move |s| {
+            let _ = tx.send(s);
+        });
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(800)))
+            .await
+            .unwrap()
+            .expect("watcher must emit Philip → Philipp");
+        assert_eq!(got.old, "Philip");
+        assert_eq!(got.new, "Philipp");
+    }
+
+    #[tokio::test]
+    async fn snapshot_retries_until_typed_span_found() {
+        // First AX read missed the typed text (race with enigo). Subsequent
+        // reads see the dictation present.
+        let field = FakeField::new(vec![
+            stale_snap("Hi I am "),                     // bad: typed_span_found=false
+            mk("Hi I am Philip", "Philip"),             // good: snapshot retry succeeds
+            mk("Hi I am Philipp", "Philip"),            // user edited
+            mk("Hi I am Philipp", "Philip"),            // stable
+        ]);
+        let dict = temp_store();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _h = spawn(field, dict.clone(), "Philip".to_string(), move |s| {
+            let _ = tx.send(s);
+        });
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(800)))
+            .await
+            .unwrap()
+            .expect("watcher must emit after snapshot retry");
+        assert_eq!(got.old, "Philip");
+        assert_eq!(got.new, "Philipp");
+    }
+
+    #[tokio::test]
+    async fn does_not_fire_when_anchors_not_aligned() {
+        // baseline anchors: prefix="Hi ", suffix=" bye"
+        // user edits the SUFFIX context (not the dictation) → anchors never realign
+        let field = FakeField::new(vec![
+            mk("Hi Philip bye", "Philip"),         // baseline
+            mk("Hi Philip later", "Philip"),       // user mangled the suffix
+            mk("Hi Philip later", "Philip"),       // stable
+        ]);
+        let dict = temp_store();
+        let (tx, rx) = std::sync::mpsc::channel::<CorrectionSuggestion>();
+        let _h = spawn(field, dict, "Philip".to_string(), move |s| {
+            let _ = tx.send(s);
+        });
+        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(2500)))
+            .await
+            .unwrap();
+        assert!(
+            got.is_err(),
+            "boundaries never realign — must not fire spurious suggestion"
         );
     }
 

@@ -81,6 +81,19 @@ pub fn find_single_word_substitution(
     compare_full(baseline, current)
 }
 
+/// Compare two spans (already bounded by `correction::boundary`) for exactly
+/// one word substitution. No internal anchoring — the caller has located the
+/// dictated region via surrounding-context anchors and passes the trimmed
+/// inner span as `current`.
+pub fn find_word_substitution_in_spans(
+    original: &str,
+    current: &str,
+) -> Option<WordSubstitution> {
+    let b_words = collect_words(original);
+    let all_c_words = collect_words(current);
+    compare_word_lists(&b_words, &all_c_words)
+}
+
 fn collect_words(s: &str) -> Vec<&str> {
     tokenize(s)
         .into_iter()
@@ -255,6 +268,28 @@ mod tests {
                 new: "Robert".into(),
             })
         );
+    }
+
+    #[test]
+    fn finds_substitution_in_bounded_spans() {
+        let got = find_word_substitution_in_spans("Hello Timmy", "Hello Tim");
+        assert_eq!(
+            got,
+            Some(WordSubstitution {
+                old: "Timmy".into(),
+                new: "Tim".into()
+            })
+        );
+    }
+
+    #[test]
+    fn span_helper_returns_none_when_unchanged() {
+        assert!(find_word_substitution_in_spans("Hello", "Hello").is_none());
+    }
+
+    #[test]
+    fn span_helper_returns_none_when_two_words_changed() {
+        assert!(find_word_substitution_in_spans("Hello Timmy", "Hi Tim").is_none());
     }
 
     #[test]
