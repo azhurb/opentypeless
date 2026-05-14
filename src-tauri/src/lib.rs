@@ -1,5 +1,6 @@
 pub mod app_detector;
 pub mod audio;
+pub mod correction;
 pub mod llm;
 pub mod output;
 pub mod pipeline;
@@ -494,14 +495,14 @@ async fn clear_history(state: tauri::State<'_, storage::HistoryStore>) -> Result
 
 #[tauri::command]
 async fn get_dictionary(
-    state: tauri::State<'_, storage::DictionaryStore>,
+    state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
 ) -> Result<Vec<storage::DictionaryEntry>, String> {
     state.list().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn add_dictionary_entry(
-    state: tauri::State<'_, storage::DictionaryStore>,
+    state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
     word: String,
     pronunciation: Option<String>,
 ) -> Result<(), String> {
@@ -518,17 +519,31 @@ async fn add_dictionary_entry(
         }
     }
     state
-        .add(&word, pronunciation.as_deref())
+        .add_manual(&word, pronunciation.as_deref())
         .await
+        .map(|_| ())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn remove_dictionary_entry(
-    state: tauri::State<'_, storage::DictionaryStore>,
+    state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
     id: i64,
 ) -> Result<(), String> {
     state.remove(id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn correction_undo(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Arc<storage::DictionaryStore>>,
+    row_id: i64,
+) -> Result<(), String> {
+    state.remove(row_id).await.map_err(|e| e.to_string())?;
+    if let Err(e) = app.emit("dictionary:changed", ()) {
+        tracing::warn!("failed to emit dictionary:changed: {}", e);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -610,8 +625,7 @@ async fn resume_hotkey(
 ///   1. Swap the object's class from `NSWindow` to `NSPanel` and OR
 ///      `NSWindowStyleMaskNonactivatingPanel` into the style mask. macOS
 ///      excludes regular `NSWindow`s from foreign fullscreen Spaces; only
-///      `NSPanel` with the nonactivating style is allowed (this is the same
-///      mechanism Wispr Flow's separate helper bundle uses).
+///      `NSPanel` with the nonactivating style is allowed.
 ///   2. OR `NSWindowCollectionBehaviorFullScreenAuxiliary` into the collection
 ///      behavior so the panel is allowed to render in fullscreen Spaces.
 ///      `CanJoinAllSpaces` alone is not sufficient on macOS Tahoe.
@@ -1009,8 +1023,10 @@ pub fn run() {
             let config_manager = storage::ConfigManager::new(app_handle.clone());
             let history_store = storage::HistoryStore::new(db_path.clone())
                 .map_err(|e| anyhow::anyhow!("Failed to init history store: {}", e))?;
-            let dictionary_store = storage::DictionaryStore::new(db_path)
-                .map_err(|e| anyhow::anyhow!("Failed to init dictionary store: {}", e))?;
+            let dictionary_store = std::sync::Arc::new(
+                storage::DictionaryStore::new(db_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to init dictionary store: {}", e))?,
+            );
             let pipeline_handle = pipeline::PipelineHandle::new(app_handle.clone());
 
             // Load initial config to get hotkey
@@ -1276,6 +1292,7 @@ pub fn run() {
             get_dictionary,
             add_dictionary_entry,
             remove_dictionary_entry,
+            correction_undo,
             update_hotkey,
             pause_hotkey,
             resume_hotkey,

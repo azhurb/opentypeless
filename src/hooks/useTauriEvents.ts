@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '../stores/appStore'
 import type { PipelineState } from '../stores/appStore'
-import { getHistory } from '../lib/tauri'
+import { getHistory, getDictionary } from '../lib/tauri'
 
 export function useTauriEvents() {
   const {
@@ -15,6 +15,8 @@ export function useTauriEvents() {
     setPipelineError,
     setAccessibilityTrusted,
     setHistory,
+    setDictionary,
+    setCorrectionSuggestion,
   } = useAppStore()
 
   useEffect(() => {
@@ -77,6 +79,26 @@ export function useTauriEvents() {
       window.location.hash = '#/settings'
     })
 
+    addListener<{ rowId: number; old: string; new: string; autoConfirmMs: number }>(
+      'correction:suggest',
+      (payload) => {
+        setCorrectionSuggestion({
+          rowId: payload.rowId,
+          old: payload.old,
+          new: payload.new,
+          autoConfirmMs: payload.autoConfirmMs,
+        })
+      },
+    )
+
+    addListener<void>('dictionary:changed', () => {
+      getDictionary()
+        .then(setDictionary)
+        .catch((err) => {
+          console.error('Failed to refresh dictionary:', err)
+        })
+    })
+
     return () => {
       cancelled = true
       unlisteners.forEach((unlisten) => unlisten())
@@ -91,5 +113,7 @@ export function useTauriEvents() {
     setPipelineError,
     setAccessibilityTrusted,
     setHistory,
+    setDictionary,
+    setCorrectionSuggestion,
   ])
 }

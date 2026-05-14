@@ -137,8 +137,21 @@
     "pronunciationOptional": "发音（可选）",
     "add": "添加",
     "noEntries": "暂无条目。添加专有名词以提高识别准确度。",
+    "learnFromCorrections": {
+      "label": "Learn from corrections (macOS, experimental)",
+      "description": "After dictation, OpenTypeless watches your edits for ~15 s and offers to add fixed names and terms here. Reads the focused text field via macOS Accessibility — already granted for keyboard output.",
+      "macOnly": "macOS only for now"
+    },
     "failedToAdd": "添加词典条目失败",
-    "failedToRemove": "删除词典条目失败"
+    "failedToRemove": "删除词典条目失败",
+    "autoLearnedLabel": "Auto-learned from your edit",
+    "autoLearnedTooltip": "Auto-learned. STT produced \"{{observed}}\"."
+  },
+  "correction": {
+    "added": "Added \"{{new}}\" to your dictionary",
+    "replaced": "Replaced \"{{old}}\" with \"{{new}}\"",
+    "undo": "Undo",
+    "removed": "Removed \"{{new}}\" from your dictionary"
   },
   "history": {
     "title": "历史记录",

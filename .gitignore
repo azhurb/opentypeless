@@ -48,3 +48,4 @@ jelly-reference*.png
 
 # Internal design docs (not for public distribution)
 docs/superpowers/
+.scratch-research/

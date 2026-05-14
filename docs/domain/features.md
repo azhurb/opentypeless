@@ -70,7 +70,7 @@ Current prompt behavior includes:
 
 A single trailing space is appended to whatever is typed into the foreground app (see [Pipeline](../architecture/pipeline.md)), so successive dictations don't glue together.
 
-When polish and keyboard output mode are both active, polished tokens are streamed directly into the foreground app as they arrive from the LLM (Wispr Flow-style "types as it generates"), instead of waiting for the full response. Clipboard mode stays batched.
+When polish and keyboard output mode are both active, polished tokens are streamed directly into the foreground app as they arrive from the LLM ("types as it generates"), instead of waiting for the full response. Clipboard mode stays batched.
 
 For Gemini models (any model name containing `gemini`), the LLM request additionally sets `reasoning_effort: "none"` to keep thinking off — `gemini-flash-lite` already defaults to no thinking, but the explicit opt-out is defensive against any future model where it might engage. Other providers silently ignore this field.
 
@@ -129,6 +129,14 @@ Repo evidence:
 Needs confirmation:
 
 - Pronunciation is stored in the dictionary schema/UI, but current prompt construction uses only words from `DictionaryStore::words()`.
+
+### Learn From Corrections (macOS, experimental)
+
+Off by default. When enabled (Settings → Dictionary → "Learn from corrections"), OpenTypeless watches the focused text field via macOS Accessibility for up to 60 s after each dictation. If the user replaces exactly one word inside the typed span with a proper-noun-shaped replacement (capitalized, camelCase, all-caps acronym, or alphanumeric brand), the new word is added to the dictionary optimistically and a 5 s Undo toast appears in the capsule overlay. The toast reads *Replaced "Vladislav" with "Vlad"* — showing both the STT-produced word and the user's correction. The watcher skips `AXSecureTextField` (password fields) and never logs field values.
+
+"Edit done" is detected via a **boundary-anchored settle predicate** — the chars flanking the dictated region in the field must still match the original surrounding context before a candidate substitution is considered. This is more robust than a pure time-based debounce, which mis-fires when the user pauses mid-edit. When dictation lands in an empty field (no surrounding context to anchor against), the watcher falls back to time-based debounce. Implementation: `src-tauri/src/correction/{mod,boundary,diff,classify}.rs`; frontend toast in `src/components/Capsule/CorrectionToast.tsx`.
+
+Auto-learned rows in Settings → Dictionary show a subtle Sparkles icon next to the word; hovering surfaces the STT-produced word the user replaced. See [Storage → Dictionary](../architecture/storage.md#dictionary-dictionarystore) for the underlying `source`/`observed_source` columns.
 
 ## Privacy And Local-First BYOK
 

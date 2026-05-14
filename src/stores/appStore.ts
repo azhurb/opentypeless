@@ -40,6 +40,10 @@ export interface DictionaryEntry {
   id: number
   word: string
   pronunciation: string | null
+  source: string
+  observed_source: string | null
+  frequency_used: number
+  last_used: string | null
 }
 
 export interface AppConfig {
@@ -63,9 +67,17 @@ export interface AppConfig {
   max_recording_seconds: number
   ui_language: string
   capsule_auto_hide: boolean
+  learn_from_corrections_enabled: boolean
 }
 
 export type TestStatus = 'idle' | 'testing' | 'success' | 'error'
+
+export interface CorrectionSuggestion {
+  rowId: number
+  old: string
+  new: string
+  autoConfirmMs: number
+}
 
 interface AppState {
   // Pipeline
@@ -131,6 +143,10 @@ interface AppState {
   pipelineError: string | null
   setPipelineError: (error: string | null) => void
 
+  // Correction suggestion (learn from corrections toast)
+  correctionSuggestion: CorrectionSuggestion | null
+  setCorrectionSuggestion: (s: CorrectionSuggestion | null) => void
+
   // macOS Accessibility permission
   accessibilityTrusted: boolean
   setAccessibilityTrusted: (trusted: boolean) => void
@@ -174,6 +190,7 @@ const defaultConfig: AppConfig = {
   max_recording_seconds: 30,
   ui_language: 'en',
   capsule_auto_hide: false,
+  learn_from_corrections_enabled: false,
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -228,6 +245,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   pipelineError: null,
   setPipelineError: (pipelineError) => set({ pipelineError }),
+
+  correctionSuggestion: null,
+  setCorrectionSuggestion: (correctionSuggestion) => set({ correctionSuggestion }),
 
   accessibilityTrusted: true,
   setAccessibilityTrusted: (accessibilityTrusted) => set({ accessibilityTrusted }),

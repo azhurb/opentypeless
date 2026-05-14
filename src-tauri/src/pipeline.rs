@@ -185,6 +185,7 @@ pub struct PipelineHandle {
     preloaded_dictionary: Arc<Mutex<Option<Vec<String>>>>,
     preloaded_selected_text: Arc<Mutex<Option<String>>>,
     recording_start: Arc<Mutex<Option<std::time::Instant>>>,
+    pub(crate) current_correction: Arc<Mutex<Option<crate::correction::CorrectionHandle>>>,
     shared_client: reqwest::Client,
     /// Serializes start()/stop() so that stop() waits for start() to finish
     /// its setup before reading shared state (preloaded_config, audio_handle, etc.).
@@ -208,6 +209,7 @@ impl PipelineHandle {
             preloaded_dictionary: Arc::new(Mutex::new(None)),
             preloaded_selected_text: Arc::new(Mutex::new(None)),
             recording_start: Arc::new(Mutex::new(None)),
+            current_correction: Arc::new(Mutex::new(None)),
             shared_client: reqwest::Client::new(),
             pipeline_lock: tokio::sync::Mutex::new(()),
         }
@@ -334,6 +336,16 @@ impl PipelineHandle {
         // Reset abort flag for new recording
         self.abort_flag.store(false, Ordering::SeqCst);
 
+        // Cancel any in-flight correction watcher from the previous dictation
+        if let Some(h) = self
+            .current_correction
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            h.cancel();
+        }
+
         // Atomic CAS: only one caller can transition Idle → Recording
         if self
             .state
@@ -376,7 +388,7 @@ impl PipelineHandle {
             .unwrap_or_else(|e| e.into_inner()) = Some(app_detector::detect_current_app());
         let dict_words = self
             .app_handle
-            .state::<storage::DictionaryStore>()
+            .state::<std::sync::Arc<storage::DictionaryStore>>()
             .words()
             .await;
         *self
@@ -964,7 +976,7 @@ impl PipelineHandle {
             app_name: app_ctx.app_name,
             app_type: format!("{:?}", app_ctx.app_type),
             raw_text,
-            polished_text: final_text,
+            polished_text: final_text.clone(),
             language: None,
             duration_ms,
         };
@@ -975,6 +987,48 @@ impl PipelineHandle {
             .await
         {
             tracing::error!("Failed to save history: {}", e);
+        }
+
+        // Learn-from-corrections: watch for the user fixing one word in our typed output.
+        if config.learn_from_corrections_enabled {
+            let typed = with_trailing_space(&final_text);
+            if !typed.trim().is_empty() {
+                if let Some(field) = crate::correction::current_platform_field() {
+                    let dictionary = self
+                        .app_handle
+                        .state::<std::sync::Arc<storage::DictionaryStore>>()
+                        .inner()
+                        .clone();
+                    let app_handle = self.app_handle.clone();
+                    let handle = crate::correction::spawn(
+                        field,
+                        dictionary,
+                        typed,
+                        move |sugg| {
+                            let payload = serde_json::json!({
+                                "rowId": sugg.row_id,
+                                "old": sugg.old,
+                                "new": sugg.new,
+                                "autoConfirmMs": sugg.auto_confirm_ms,
+                            });
+                            if let Err(e) =
+                                app_handle.emit_to("capsule", "correction:suggest", payload)
+                            {
+                                tracing::warn!("failed to emit correction:suggest: {}", e);
+                            }
+                            // Tell every window the dictionary just changed so the
+                            // Settings → Dictionary list re-fetches without a restart.
+                            if let Err(e) = app_handle.emit("dictionary:changed", ()) {
+                                tracing::warn!("failed to emit dictionary:changed: {}", e);
+                            }
+                        },
+                    );
+                    *self
+                        .current_correction
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(handle);
+                }
+            }
         }
 
         self.set_state(PipelineState::Idle);

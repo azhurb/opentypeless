@@ -1,13 +1,17 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Trash2, Plus } from 'lucide-react'
+import { Trash2, Plus, Sparkles } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { addDictionaryEntry, removeDictionaryEntry, getDictionary } from '../../lib/tauri'
 import { toast } from '../Toast'
 
+const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC')
+
 export function DictionaryPane() {
   const dictionary = useAppStore((s) => s.dictionary)
   const setDictionary = useAppStore((s) => s.setDictionary)
+  const config = useAppStore((s) => s.config)
+  const updateConfig = useAppStore((s) => s.updateConfig)
   const { t } = useTranslation()
   const [word, setWord] = useState('')
   const [pronunciation, setPronunciation] = useState('')
@@ -39,6 +43,32 @@ export function DictionaryPane() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-start gap-3 p-3 bg-bg-secondary rounded-[10px] border border-border">
+        <input
+          id="learn-from-corrections"
+          type="checkbox"
+          checked={config.learn_from_corrections_enabled}
+          disabled={!isMac}
+          onChange={(e) =>
+            updateConfig({ learn_from_corrections_enabled: e.target.checked })
+          }
+          className="mt-0.5"
+        />
+        <label htmlFor="learn-from-corrections" className="flex-1">
+          <div className="text-[13px] text-text-primary font-medium">
+            {t('dictionary.learnFromCorrections.label')}
+          </div>
+          <div className="text-[12px] text-text-secondary mt-0.5">
+            {t('dictionary.learnFromCorrections.description')}
+          </div>
+          {!isMac && (
+            <div className="text-[11px] text-text-tertiary mt-1">
+              {t('dictionary.learnFromCorrections.macOnly')}
+            </div>
+          )}
+        </label>
+      </div>
+
       <div className="flex gap-2">
         <input
           value={word}
@@ -88,7 +118,26 @@ export function DictionaryPane() {
                   key={entry.id}
                   className="border-t border-border hover:bg-bg-secondary/50 transition-colors"
                 >
-                  <td className="px-3 py-2.5">{entry.word}</td>
+                  <td className="px-3 py-2.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{entry.word}</span>
+                      {entry.source === 'user_edits' && (
+                        <span
+                          title={
+                            entry.observed_source
+                              ? t('dictionary.autoLearnedTooltip', {
+                                  observed: entry.observed_source,
+                                })
+                              : t('dictionary.autoLearnedLabel')
+                          }
+                          aria-label={t('dictionary.autoLearnedLabel')}
+                          className="inline-flex"
+                        >
+                          <Sparkles size={12} className="text-text-tertiary shrink-0" />
+                        </span>
+                      )}
+                    </span>
+                  </td>
                   <td className="px-3 py-2.5 text-text-secondary">{entry.pronunciation || '-'}</td>
                   <td className="px-3 py-2.5">
                     <button
