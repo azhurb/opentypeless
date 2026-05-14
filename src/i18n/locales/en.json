@@ -143,7 +143,9 @@
       "macOnly": "macOS only for now"
     },
     "failedToAdd": "Failed to add dictionary entry",
-    "failedToRemove": "Failed to remove dictionary entry"
+    "failedToRemove": "Failed to remove dictionary entry",
+    "autoLearnedLabel": "Auto-learned from your edit",
+    "autoLearnedTooltip": "Auto-learned. STT produced \"{{observed}}\"."
   },
   "correction": {
     "added": "Added \"{{new}}\" to your dictionary",

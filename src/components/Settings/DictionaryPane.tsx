@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Trash2, Plus } from 'lucide-react'
+import { Trash2, Plus, Sparkles } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { addDictionaryEntry, removeDictionaryEntry, getDictionary } from '../../lib/tauri'
 import { toast } from '../Toast'
@@ -118,7 +118,26 @@ export function DictionaryPane() {
                   key={entry.id}
                   className="border-t border-border hover:bg-bg-secondary/50 transition-colors"
                 >
-                  <td className="px-3 py-2.5">{entry.word}</td>
+                  <td className="px-3 py-2.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{entry.word}</span>
+                      {entry.source === 'user_edits' && (
+                        <span
+                          title={
+                            entry.observed_source
+                              ? t('dictionary.autoLearnedTooltip', {
+                                  observed: entry.observed_source,
+                                })
+                              : t('dictionary.autoLearnedLabel')
+                          }
+                          aria-label={t('dictionary.autoLearnedLabel')}
+                          className="inline-flex"
+                        >
+                          <Sparkles size={12} className="text-text-tertiary shrink-0" />
+                        </span>
+                      )}
+                    </span>
+                  </td>
                   <td className="px-3 py-2.5 text-text-secondary">{entry.pronunciation || '-'}</td>
                   <td className="px-3 py-2.5">
                     <button
