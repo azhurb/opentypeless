@@ -16,6 +16,8 @@ export function CorrectionToast() {
   const [mode, setMode] = useState<Mode>('idle')
   const startedAtRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const undoInFlightRef = useRef(false)
 
   useEffect(() => {
     if (suggestion && pipelineState !== 'idle') {
@@ -30,7 +32,7 @@ export function CorrectionToast() {
     startedAtRef.current = performance.now()
     const tick = () => {
       const start = startedAtRef.current
-      if (start === null || !suggestion) return
+      if (start === null || undoInFlightRef.current) return
       const elapsed = performance.now() - start
       const p = Math.min(1, elapsed / suggestion.autoConfirmMs)
       setProgress(p)
@@ -48,19 +50,36 @@ export function CorrectionToast() {
     }
   }, [suggestion, mode, clearSuggestion])
 
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current !== null) {
+        clearTimeout(undoTimerRef.current)
+        undoTimerRef.current = null
+      }
+    }
+  }, [])
+
   const handleUndo = async () => {
     if (!suggestion) return
+    undoInFlightRef.current = true
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
     try {
       await correctionUndo(suggestion.rowId)
       setMode('undone')
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
-      setTimeout(() => {
+      if (undoTimerRef.current !== null) clearTimeout(undoTimerRef.current)
+      undoTimerRef.current = setTimeout(() => {
+        undoTimerRef.current = null
+        undoInFlightRef.current = false
         clearSuggestion(null)
         setMode('idle')
         setProgress(0)
       }, 1000)
     } catch (e) {
       console.error('correctionUndo failed:', e)
+      undoInFlightRef.current = false
       clearSuggestion(null)
       setMode('idle')
     }
