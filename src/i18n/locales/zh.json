@@ -21,8 +21,7 @@
     "llmProvider": "LLM 服务",
     "aiPolish": "AI 润色",
     "enabled": "已启用",
-    "disabled": "已禁用",
-    "outputMode": "输出模式"
+    "disabled": "已禁用"
   },
   "onboarding": {
     "welcomeTitle": "欢迎使用 OpenTypeless",
@@ -77,8 +76,7 @@
     "openMainWindow": "打开主窗口",
     "settings": "设置",
     "history": "历史记录",
-    "exit": "退出",
-    "accessibilityRequired": "需要辅助功能权限 — 请打开设置"
+    "exit": "退出"
   },
   "settings": {
     "title": "设置",
@@ -92,9 +90,6 @@
     "clickToConfirm": "再次点击确认，或按下其他组合键",
     "holdToTalk": "按住说话",
     "toggleOnOff": "切换开/关",
-    "outputMode": "输出模式",
-    "keyboardSimulation": "键盘模拟",
-    "clipboardPaste": "剪贴板粘贴",
     "other": "其他",
     "launchAtStartup": "开机启动",
     "closeToTray": "关闭到系统托盘",
@@ -125,11 +120,7 @@
     "tauriReact": "Tauri v2 + React",
     "view": "查看",
     "maxRecordingDuration": "最大录音时长",
-    "hideCapsuleWhenIdle": "空闲时隐藏胶囊",
-    "accessibilityPermission": "macOS 辅助功能",
-    "accessibilityGranted": "权限已授予",
-    "accessibilityRequired": "键盘输出需要此权限",
-    "grantPermission": "授权"
+    "hideCapsuleWhenIdle": "空闲时隐藏胶囊"
   },
   "dictionary": {
     "word": "词语",
@@ -139,7 +130,7 @@
     "noEntries": "暂无条目。添加专有名词以提高识别准确度。",
     "learnFromCorrections": {
       "label": "Learn from corrections (experimental)",
-      "description": "After dictation, OpenTypeless watches your edits for ~15 s and offers to add fixed names and terms here. Reads the focused text field via Accessibility — already granted for keyboard output."
+      "description": "After dictation, OpenTypeless watches your edits for ~15 s and offers to add fixed names and terms here. Reads the focused text field via macOS Accessibility — you'll be prompted to grant the permission on first use."
     },
     "failedToAdd": "添加词典条目失败",
     "failedToRemove": "删除词典条目失败",

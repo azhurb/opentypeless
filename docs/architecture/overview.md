@@ -26,7 +26,7 @@ Detail: [Pipeline](pipeline.md). Provider abstractions: [Providers](providers.md
 | `src-tauri/src/pipeline.rs` | Core recording pipeline (singleton `PipelineHandle`). |
 | `src-tauri/src/stt/` | STT provider implementations and factory. |
 | `src-tauri/src/llm/` | LLM provider implementations and prompt builder. |
-| `src-tauri/src/output/` | Keyboard and clipboard output modes. |
+| `src-tauri/src/output/` | Clipboard-based text output with per-target chunking. |
 | `src-tauri/src/storage/` | Config (`tauri-plugin-store`) and SQLite stores. |
 | `src-tauri/src/audio/` | Microphone capture (`cpal`). |
 | `src-tauri/src/app_detector/` | Foreground app detection / classification. |

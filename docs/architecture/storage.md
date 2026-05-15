@@ -24,7 +24,6 @@ Verified against `src-tauri/src/storage/mod.rs::Default::default`:
 | `target_lang` | `en` |
 | `hotkey` | `Alt+/` (macOS) / `Ctrl+/` (other) |
 | `hotkey_mode` | `hold` |
-| `output_mode` | `keyboard` |
 | `close_to_tray` | `true` |
 | `max_recording_seconds` | `30` |
 | `learn_from_corrections_enabled` | `false` |

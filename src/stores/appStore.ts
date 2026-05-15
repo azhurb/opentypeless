@@ -21,7 +21,6 @@ export type LlmProvider =
   | 'claude'
   | 'ollama'
   | 'openrouter'
-export type OutputMode = 'keyboard' | 'clipboard'
 export type HotkeyMode = 'hold' | 'toggle'
 export type Theme = 'light' | 'dark' | 'system'
 
@@ -59,7 +58,6 @@ export interface AppConfig {
   target_lang: string
   hotkey: string
   hotkey_mode: HotkeyMode
-  output_mode: OutputMode
   selected_text_enabled: boolean
   theme: Theme
   auto_start: boolean
@@ -182,7 +180,6 @@ const defaultConfig: AppConfig = {
   target_lang: 'en',
   hotkey: isMac ? 'Alt+/' : 'Ctrl+/',
   hotkey_mode: 'hold',
-  output_mode: 'keyboard',
   selected_text_enabled: false,
   theme: 'system',
   auto_start: false,

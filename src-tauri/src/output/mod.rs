@@ -1,24 +1,17 @@
 pub mod clipboard;
-pub mod keyboard;
+mod chunker;
 
 use anyhow::Result;
-use async_trait::async_trait;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum OutputMode {
-    Keyboard,
-    Clipboard,
-}
+use crate::app_detector::AppContext;
 
-#[async_trait]
-pub trait TextOutput: Send + Sync {
-    async fn type_text(&self, text: &str) -> Result<()>;
-    fn mode(&self) -> OutputMode;
-}
-
-pub fn create_output(mode: OutputMode) -> Box<dyn TextOutput> {
-    match mode {
-        OutputMode::Keyboard => Box::new(keyboard::KeyboardOutput::new()),
-        OutputMode::Clipboard => Box::new(clipboard::ClipboardOutput::new()),
-    }
+/// Paste `text` into whichever app is currently focused.
+///
+/// Backs up the user's existing clipboard, writes `text` to the system
+/// clipboard, synthesizes Cmd+V, then restores the prior clipboard
+/// contents. For terminal-hosted CLIs that struggle with bulk pastes
+/// (Claude CLI, Codex CLI, …) the paste is split into multiple chunks
+/// with brief inter-chunk delays.
+pub async fn paste_text(text: &str, app: &AppContext) -> Result<()> {
+    clipboard::paste(text, app).await
 }

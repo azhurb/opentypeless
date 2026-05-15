@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
+## [Unreleased]
+
+### Changed
+- Output is now exclusively clipboard-paste with the user's prior clipboard snapshotted and restored. The "keyboard simulation" output mode and the macOS Accessibility prompt that gated it are removed; users no longer need to grant Accessibility for normal dictation.
+- Foreground app detection on macOS now also captures the bundle identifier, used to drive per-target paste behavior.
+
+### Added
+- Per-target paste chunking for terminal-hosted CLIs (Claude CLI, Codex CLI, Gemini CLI). When the foreground app is a recognised terminal emulator or IDE terminal panel (Terminal.app, iTerm2, Warp, Ghostty, Kitty, Alacritty, Hyper, WezTerm, VS Code, Cursor, Windsurf, JetBrains family) and the window title matches a known CLI name, the paste is split into chunks with brief delays so the CLI's input buffer doesn't drop characters.
+
+### Removed
+- "Output Mode" setting in Settings → General and the associated macOS Accessibility permission card.
+- Streaming-as-you-type output: LLM polish output now lands as a single paste once polish completes. The capsule still renders the live polish indicator from `llm:chunk` events.
+
 ## [0.2.0] - 2026-05-10
 
 First fork release. Cuts cloud / account / subscription / telemetry surfaces and ships substantive UX and reliability work on top of upstream `0.1.0`.

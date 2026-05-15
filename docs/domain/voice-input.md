@@ -10,13 +10,12 @@ Evidence: `README.md`, `src-tauri/src/pipeline.rs`, `src-tauri/src/llm/prompt.rs
 2. App records microphone audio.
 3. STT provider transcribes speech.
 4. LLM provider optionally polishes or translates the transcript.
-5. App outputs text via keyboard simulation or clipboard paste.
+5. App pastes the result into the focused field via the system clipboard, chunking the paste when the target is a terminal-hosted CLI ([Pipeline → Output Path](../architecture/pipeline.md#output-path)).
 6. App stores a local history entry.
 
 ## User-Facing Modes
 
 - Hotkey mode: `hold` (record while held) or `toggle` (start/stop on each press).
-- Output mode: `keyboard` or `clipboard`.
 - Optional: AI polish, translation, selected-text mode, custom dictionary, per-app context, local history, theme (dark/light/system).
 
 Defaults are listed in [Storage → AppConfig defaults](../architecture/storage.md#appconfig-defaults).

@@ -138,7 +138,7 @@ All settings are accessible from the in-app Settings panel:
 
 - **Speech Recognition** — choose STT provider and enter your API key
 - **AI Polish** — choose LLM provider, model, and API key
-- **General** — hotkey, output mode, theme, auto-start
+- **General** — hotkey, theme, auto-start
 - **Dictionary** — add custom terms for better transcription accuracy
 
 API keys are stored locally via `tauri-plugin-store`. All STT/LLM requests go directly from your machine to the provider you configure. There is no cloud account, subscription, telemetry, or auto-update — this fork is BYOK-only.
@@ -150,7 +150,7 @@ For deeper repository-local architecture docs, start at [docs/index.md](docs/ind
 **Data Flow Pipeline:**
 
 ```
-Microphone → Audio Capture → STT Provider → Raw Transcript → LLM Polish → Keyboard/Clipboard Output
+Microphone → Audio Capture → STT Provider → Raw Transcript → LLM Polish → Clipboard Paste
 ```
 
 ```
@@ -164,7 +164,7 @@ src-tauri/src/        # Rust backend
 ├── audio/            # Audio capture via cpal
 ├── stt/              # STT providers (Deepgram, AssemblyAI, Whisper-compat)
 ├── llm/              # LLM providers (OpenAI-compatible)
-├── output/           # Text output (keyboard simulation, clipboard paste)
+├── output/           # Clipboard-paste output with per-target chunking
 ├── storage/          # Config (tauri-plugin-store) + history/dictionary (SQLite)
 ├── app_detector/     # Detect active application for context
 ├── pipeline.rs       # Recording → STT → LLM → Output orchestration

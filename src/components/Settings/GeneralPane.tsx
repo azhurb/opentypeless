@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../stores/appStore'
-import type { HotkeyMode, OutputMode } from '../../stores/appStore'
-import { updateHotkey, pauseHotkey, resumeHotkey, checkAccessibilityPermission, requestAccessibilityPermission } from '../../lib/tauri'
+import type { HotkeyMode } from '../../stores/appStore'
+import { updateHotkey, pauseHotkey, resumeHotkey } from '../../lib/tauri'
 import { SegmentedControl } from './shared/SegmentedControl'
 import { Toggle } from './shared/Toggle'
 
@@ -183,23 +183,6 @@ export function GeneralPane() {
   const config = useAppStore((s) => s.config)
   const updateConfig = useAppStore((s) => s.updateConfig)
   const { t } = useTranslation()
-  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
-  const [a11yTrusted, setA11yTrusted] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    if (isMac && config.output_mode === 'keyboard') {
-      checkAccessibilityPermission().then(setA11yTrusted)
-      const onFocus = () => checkAccessibilityPermission().then(setA11yTrusted)
-      window.addEventListener('focus', onFocus)
-      return () => window.removeEventListener('focus', onFocus)
-    }
-  }, [isMac, config.output_mode])
-
-  const handleGrantPermission = useCallback(async () => {
-    await requestAccessibilityPermission()
-    const trusted = await checkAccessibilityPermission()
-    setA11yTrusted(trusted)
-  }, [])
 
   return (
     <div className="space-y-6">
@@ -216,42 +199,6 @@ export function GeneralPane() {
           />
         </div>
       </Section>
-
-      <Section title={t('settings.outputMode')}>
-        <SegmentedControl
-          options={[
-            { value: 'keyboard', label: t('settings.keyboardSimulation') },
-            { value: 'clipboard', label: t('settings.clipboardPaste') },
-          ]}
-          value={config.output_mode}
-          onChange={(v) => updateConfig({ output_mode: v as OutputMode })}
-        />
-      </Section>
-
-      {isMac && config.output_mode === 'keyboard' && a11yTrusted !== null && (
-        <Section title={t('settings.accessibilityPermission')}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span
-                className={`w-2 h-2 rounded-full ${a11yTrusted ? 'bg-green-500' : 'bg-amber-500'}`}
-              />
-              <span className="text-[13px] text-text-primary">
-                {a11yTrusted
-                  ? t('settings.accessibilityGranted')
-                  : t('settings.accessibilityRequired')}
-              </span>
-            </div>
-            {!a11yTrusted && (
-              <button
-                onClick={handleGrantPermission}
-                className="px-3 py-1.5 text-[12px] font-medium text-white bg-accent rounded-full border-none cursor-pointer hover:bg-accent-hover transition-colors"
-              >
-                {t('settings.grantPermission')}
-              </button>
-            )}
-          </div>
-        </Section>
-      )}
 
       <Section title={t('settings.maxRecordingDuration', 'Max Recording Duration')}>
         <div className="flex items-center gap-3">

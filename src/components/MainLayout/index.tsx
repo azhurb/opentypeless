@@ -3,7 +3,6 @@ import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { spring } from '../../lib/animations'
 import { useRoute, type Route } from '../../lib/router'
-import { AccessibilityBanner } from './AccessibilityBanner'
 
 const navItems: { id: Route; labelKey: string; icon: typeof Home }[] = [
   { id: 'home', labelKey: 'nav.home', icon: Home },
@@ -68,7 +67,6 @@ export function MainLayout({ children }: Props) {
 
       {/* Content */}
       <main className="flex-1 min-w-0 flex flex-col">
-        <AccessibilityBanner />
         <div className="flex-1 overflow-y-auto">{children}</div>
       </main>
     </div>

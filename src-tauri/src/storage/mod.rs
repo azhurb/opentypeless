@@ -20,7 +20,6 @@ pub struct AppConfig {
     pub target_lang: String,
     pub hotkey: String,
     pub hotkey_mode: String,
-    pub output_mode: String,
     pub selected_text_enabled: bool,
     pub theme: String,
     pub auto_start: bool,
@@ -49,7 +48,6 @@ impl Default for AppConfig {
             #[cfg(not(target_os = "macos"))]
             hotkey: "Ctrl+/".to_string(),
             hotkey_mode: "hold".to_string(),
-            output_mode: "keyboard".to_string(),
             selected_text_enabled: false,
             theme: "system".to_string(),
             auto_start: false,

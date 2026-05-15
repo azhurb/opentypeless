@@ -69,10 +69,6 @@ export function HomePage() {
               {config.polish_enabled ? t('home.enabled') : t('home.disabled')}
             </span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-text-secondary">{t('home.outputMode')}</span>
-            <span className="text-text-primary font-medium">{config.output_mode}</span>
-          </div>
         </div>
       </div>
 

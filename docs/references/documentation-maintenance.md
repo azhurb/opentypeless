@@ -14,7 +14,7 @@ If your change touches any of the triggers below, update the matching doc in the
 | Pipeline states, events, lifecycle, or invariants | [`architecture/pipeline.md`](../architecture/pipeline.md) (and event list in [`architecture/frontend-backend.md`](../architecture/frontend-backend.md)) |
 | New / removed / renamed Tauri command or emitted event | [`architecture/frontend-backend.md`](../architecture/frontend-backend.md) |
 | Storage schema, `AppConfig` shape or defaults, retention rules | [`architecture/storage.md`](../architecture/storage.md) |
-| Hotkey, output mode, polishing, translation, selected-text, history, or onboarding behavior | [`domain/voice-input.md`](../domain/voice-input.md), [`domain/features.md`](../domain/features.md) |
+| Hotkey, paste/chunking behavior, polishing, translation, selected-text, history, or onboarding behavior | [`domain/voice-input.md`](../domain/voice-input.md), [`domain/features.md`](../domain/features.md) |
 | Public claims in `README.md` | [`domain/features.md`](../domain/features.md) |
 | Local dev commands, CI checks, or build/release steps | [`references/commands.md`](commands.md) (single source of truth — do not duplicate the list elsewhere) |
 | New conventions or patterns future contributors must follow | [`references/conventions.md`](conventions.md) and a [decision record](../decisions/index.md) |
