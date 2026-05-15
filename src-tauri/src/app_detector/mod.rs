@@ -7,6 +7,12 @@ pub struct AppContext {
     pub app_name: String,
     pub window_title: String,
     pub app_type: AppType,
+    /// macOS bundle identifier (e.g. `com.googlecode.iterm2`). `None` on
+    /// platforms that don't have bundle IDs (Windows/Linux) or when the
+    /// foreground process can't be resolved. Used by the paste chunker to
+    /// recognize terminal emulators and IDE terminal panels.
+    #[serde(default)]
+    pub bundle_id: Option<String>,
 }
 
 impl Default for AppContext {
@@ -15,6 +21,7 @@ impl Default for AppContext {
             app_name: String::new(),
             window_title: String::new(),
             app_type: AppType::General,
+            bundle_id: None,
         }
     }
 }
@@ -67,11 +74,29 @@ fn macos_detect() -> AppContext {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
 
+    let bundle_id = Command::new("osascript")
+        .args([
+            "-e",
+            r#"tell application "System Events"
+            try
+                get bundle identifier of first application process whose frontmost is true
+            on error
+                return ""
+            end try
+        end tell"#,
+        ])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let app_type = classify_app(&app_name);
     AppContext {
         app_name,
         window_title,
         app_type,
+        bundle_id,
     }
 }
 
@@ -112,6 +137,7 @@ fn windows_detect() -> AppContext {
             app_name,
             window_title,
             app_type,
+            bundle_id: None,
         }
     }
 }

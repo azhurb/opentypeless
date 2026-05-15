@@ -9,7 +9,7 @@ use tokio::sync::Notify;
 use crate::app_detector;
 use crate::audio::{AudioCaptureHandle, AudioConfig};
 use crate::llm::{self, LlmConfig, PolishRequest};
-use crate::output::{self, OutputMode};
+use crate::output;
 use crate::storage;
 use crate::stt::{self, SttConfig, TranscriptEvent};
 
@@ -28,30 +28,6 @@ fn with_trailing_space(text: &str) -> String {
     out.push_str(trimmed);
     out.push(' ');
     out
-}
-
-/// Wind down a streaming-keyboard typing task. Optionally emits a trailing space so successive
-/// dictations don't glue together (matches `with_trailing_space` behavior for the batch path),
-/// then closes the channel and waits for the typing task to drain. No-op if streaming wasn't in
-/// use for this session.
-async fn finish_streaming_typing(
-    tx: Option<std::sync::mpsc::Sender<String>>,
-    handle: Option<tokio::task::JoinHandle<Result<()>>>,
-    trailing_space: bool,
-) {
-    if let Some(t) = tx {
-        if trailing_space {
-            let _ = t.send(" ".to_string());
-        }
-        drop(t);
-    }
-    if let Some(h) = handle {
-        match h.await {
-            Ok(Err(e)) => tracing::error!("Streaming keyboard typing failed: {}", e),
-            Err(e) => tracing::error!("Streaming keyboard task join error: {}", e),
-            Ok(Ok(())) => {}
-        }
-    }
 }
 
 /// On macOS, verify whether the process has been granted Accessibility (Assistive Access)
@@ -704,13 +680,7 @@ impl PipelineHandle {
         // isn't blocked by the long stt_done wait that follows.
         drop(guard);
 
-        // Always use batch output: keyboard mode uses output_text() after full LLM
-        // response arrives. Streaming chunk-by-chunk clipboard paste was unreliable
-        // on Windows — each Ctrl+V is async and the next set_text() could overwrite
-        // the clipboard before the target app processed the previous paste, producing
-        // garbled output that differed from what History recorded.
-
-        // Pre-build LLM provider and Enigo while STT is still processing
+        // Pre-build LLM provider while STT is still processing
         let pre_llm = if config.polish_enabled && !config.llm_api_key.is_empty() {
             let llm_config = LlmConfig {
                 api_key: config.llm_api_key.clone(),
@@ -779,32 +749,13 @@ impl PipelineHandle {
             self.set_state(PipelineState::Polishing);
             let llm_start = std::time::Instant::now();
 
-            // Stream tokens directly into the foreground app's keyboard as they arrive
-            // from the LLM, so the user sees text appear within ~200ms of stop instead of
-            // waiting for the full response. Clipboard mode stays batched (chunk-by-chunk
-            // clipboard paste was unreliable; see comment further up). Accessibility on
-            // macOS is required for streaming-keyboard typing — fall back to batch output
-            // when missing so the existing ACCESSIBILITY_REQUIRED error path still fires.
-            let stream_keyboard = config.output_mode == "keyboard"
-                && (cfg!(not(target_os = "macos")) || is_accessibility_trusted());
-
-            let (typing_tx, typing_handle) = if stream_keyboard {
-                let (tx, rx) = std::sync::mpsc::channel::<String>();
-                let handle = tokio::task::spawn_blocking(move || output::keyboard::type_stream(rx));
-                (Some(tx), Some(handle))
-            } else {
-                (None, None)
-            };
-
-            // on_chunk drives the UI capsule and (when streaming) the keyboard. Honors
-            // the abort flag so a cancelled session doesn't keep typing. Counts sent
-            // chunks so we can decide whether a polish failure is recoverable via raw
-            // fallback (zero chunks typed) or has already produced partial output.
+            // The capsule UI listens for `llm:chunk` to render a live polish
+            // indicator. The chunks are not fanned out to the foreground app —
+            // output happens once polish finishes, via a single chunked paste.
             let app_handle = self.app_handle.clone();
             let abort = self.abort_flag.clone();
-            let typing_tx_chunk = typing_tx.clone();
-            let sent_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let sent_count_chunk = sent_count.clone();
+            let chunk_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let chunk_count_inner = chunk_count.clone();
             let first_chunk_at = Arc::new(Mutex::new(None::<std::time::Duration>));
             let first_chunk_at_clone = first_chunk_at.clone();
             let on_chunk: llm::ChunkCallback = Box::new(move |chunk: &str| {
@@ -820,11 +771,7 @@ impl PipelineHandle {
                     }
                 }
                 let _ = app_handle.emit("llm:chunk", chunk);
-                if let Some(t) = &typing_tx_chunk {
-                    if t.send(chunk.to_string()).is_ok() {
-                        sent_count_chunk.fetch_add(1, Ordering::SeqCst);
-                    }
-                }
+                chunk_count_inner.fetch_add(1, Ordering::SeqCst);
             });
 
             let req = PolishRequest {
@@ -838,32 +785,17 @@ impl PipelineHandle {
 
             let polish_result = provider.polish(&llm_config, &req, Some(&on_chunk)).await;
             llm_elapsed = llm_start.elapsed();
-
-            // Drop the chunk callback explicitly. The closure captures a clone of
-            // typing_tx; if we leave it alive in scope, finish_streaming_typing will
-            // drop the original sender but the closure clone keeps the channel open,
-            // so type_stream's rx.recv() blocks forever and h.await never returns —
-            // leaving state stuck and start() silently failing the Idle→Recording CAS.
             drop(on_chunk);
 
             match polish_result {
                 Ok(response) => {
                     if self.abort_flag.load(Ordering::SeqCst) {
                         tracing::info!("Pipeline aborted after LLM polish, skipping output");
-                        finish_streaming_typing(typing_tx, typing_handle, false).await;
                         return Ok(());
                     }
                     final_text = response.polished_text;
-
-                    if stream_keyboard {
-                        // The capsule shows the "Done" check mark on Outputting — only
-                        // transition now, when the LLM has actually finished and we're
-                        // draining the last chunks + trailing space, not earlier.
-                        self.set_state(PipelineState::Outputting);
-                        finish_streaming_typing(typing_tx, typing_handle, true).await;
-                        let _ = self.app_handle.emit("pipeline:target_app", &app_ctx.app_name);
-                    } else if let Err(e) = self
-                        .output_text(&final_text, &app_ctx.app_name, &config)
+                    if let Err(e) = self
+                        .output_text(&final_text, &app_ctx)
                         .await
                     {
                         tracing::error!("Output failed: {}", e);
@@ -875,7 +807,6 @@ impl PipelineHandle {
                 Err(e) => {
                     if self.abort_flag.load(Ordering::SeqCst) {
                         tracing::info!("Pipeline aborted after LLM error, skipping output");
-                        finish_streaming_typing(typing_tx, typing_handle, false).await;
                         return Ok(());
                     }
                     tracing::error!("LLM polish failed: {}, outputting raw text", e);
@@ -883,26 +814,8 @@ impl PipelineHandle {
                     let _ = self
                         .app_handle
                         .emit("pipeline:error", format!("LLM polishing failed: {e}"));
-
-                    if stream_keyboard {
-                        finish_streaming_typing(typing_tx, typing_handle, false).await;
-                        // If nothing was typed, fall back to batch raw output. If some
-                        // chunks were already typed, don't double-output — surface the
-                        // partial result and the error and let the user decide.
-                        if sent_count.load(Ordering::SeqCst) == 0 {
-                            if let Err(e) = self
-                                .output_text(&final_text, &app_ctx.app_name, &config)
-                                .await
-                            {
-                                tracing::error!("Output failed: {}", e);
-                                let _ = self.app_handle.emit(
-                                    "pipeline:error",
-                                    format!("Output failed: {e}"),
-                                );
-                            }
-                        }
-                    } else if let Err(e) = self
-                        .output_text(&final_text, &app_ctx.app_name, &config)
+                    if let Err(e) = self
+                        .output_text(&final_text, &app_ctx)
                         .await
                     {
                         tracing::error!("Output failed: {}", e);
@@ -919,17 +832,16 @@ impl PipelineHandle {
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(-1);
             tracing::info!(
-                "[Pipeline Timing] LLM polish: {}ms (TTFT: {}ms, {} chunks{})",
+                "[Pipeline Timing] LLM polish: {}ms (TTFT: {}ms, {} chunks)",
                 llm_elapsed.as_millis(),
                 ttft_ms,
-                sent_count.load(Ordering::SeqCst),
-                if stream_keyboard { ", streaming-keyboard" } else { ", batch" }
+                chunk_count.load(Ordering::SeqCst),
             );
         } else {
             llm_elapsed = std::time::Duration::ZERO;
             final_text = raw_text.clone();
             if let Err(e) = self
-                .output_text(&final_text, &app_ctx.app_name, &config)
+                .output_text(&final_text, &app_ctx)
                 .await
             {
                 tracing::error!("Output failed: {}", e);
@@ -1038,32 +950,18 @@ impl PipelineHandle {
     async fn output_text(
         &self,
         text: &str,
-        app_name: &str,
-        config: &storage::AppConfig,
+        app_ctx: &app_detector::AppContext,
     ) -> Result<()> {
         self.set_state(PipelineState::Outputting);
-
-        let mode = if config.output_mode == "keyboard" {
-            OutputMode::Keyboard
-        } else {
-            OutputMode::Clipboard
-        };
-
-        // On macOS, keyboard output uses CGEventPost via enigo which requires
-        // Accessibility permission. Clipboard mode uses osascript which does not.
-        if mode == OutputMode::Keyboard && !is_accessibility_trusted() {
-            anyhow::bail!("ACCESSIBILITY_REQUIRED");
-        }
 
         // Trailing single space so successive dictations don't glue together
         // ("hello world" + "goodbye" → "hello world. goodbye." instead of
         // "hello world.goodbye."). History stores the un-normalized text.
         let typed = with_trailing_space(text);
 
-        let output = output::create_output(mode);
-        output.type_text(&typed).await?;
+        output::paste_text(&typed, app_ctx).await?;
 
-        let _ = self.app_handle.emit("pipeline:target_app", app_name);
+        let _ = self.app_handle.emit("pipeline:target_app", &app_ctx.app_name);
 
         Ok(())
     }

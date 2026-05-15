@@ -2,7 +2,7 @@
 
 ## AppConfig
 
-Rust + TypeScript config shape for user settings (providers, API keys, hotkey, output mode, theme, translation). Defaults: [Storage → AppConfig defaults](../architecture/storage.md#appconfig-defaults).
+Rust + TypeScript config shape for user settings (providers, API keys, hotkey, theme, translation). Defaults: [Storage → AppConfig defaults](../architecture/storage.md#appconfig-defaults).
 
 ## BYOK
 

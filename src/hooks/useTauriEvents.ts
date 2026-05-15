@@ -13,7 +13,6 @@ export function useTauriEvents() {
     setPipelineState,
     setTargetApp,
     setPipelineError,
-    setAccessibilityTrusted,
     setHistory,
     setDictionary,
     setCorrectionSuggestion,
@@ -61,9 +60,6 @@ export function useTauriEvents() {
     addListener<string>('pipeline:target_app', setTargetApp)
     addListener<string>('pipeline:error', (error) => {
       setPipelineError(error)
-      if (error === 'ACCESSIBILITY_REQUIRED') {
-        setAccessibilityTrusted(false)
-      }
     })
 
     addListener<void>('tray:settings', () => {
@@ -111,7 +107,6 @@ export function useTauriEvents() {
     setPipelineState,
     setTargetApp,
     setPipelineError,
-    setAccessibilityTrusted,
     setHistory,
     setDictionary,
     setCorrectionSuggestion,

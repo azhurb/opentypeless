@@ -26,7 +26,7 @@ State changes emit `pipeline:state` to the frontend and update tray tooltip / ca
 2. If selected-text mode is enabled, the pipeline waits `SELECTED_TEXT_CAPTURE_DELAY_MS` so hotkey modifiers can be released, then simulates Cmd/Ctrl+C and restores clipboard contents.
 3. Audio capture stops; pipeline waits for STT finalization.
 4. If polish is enabled, final text is sent to the LLM provider.
-5. Output runs (keyboard simulation or clipboard paste).
+5. Output runs (clipboard paste — see [Output Path](#output-path)).
 6. History is stored.
 7. State returns to `Idle`.
 
@@ -44,14 +44,22 @@ Pipeline-related events emitted by the backend:
 
 This list is grep-verified from `src-tauri/src/pipeline.rs` and `src-tauri/src/lib.rs`. If an event is added or renamed, update [`frontend-backend.md`](frontend-backend.md) too.
 
+## Output Path
+
+Text is delivered exclusively via the system clipboard plus a synthesized Cmd+V (Ctrl+V on Windows/Linux). Implementation lives in `src-tauri/src/output/`:
+
+- `clipboard.rs` snapshots the user's prior plain-text clipboard, writes the dictation text, sleeps `CLIPBOARD_SETTLE_MS` (30 ms), invokes paste via `osascript` on macOS / `enigo` Ctrl+V elsewhere, then schedules a restore of the prior clipboard after `RESTORE_DELAY_MS` (500 ms).
+- `chunker.rs` decides whether the paste should be split. For terminal-hosted CLIs that struggle with bulk pastes the text is broken into chunks separated by `INTER_CHUNK_DELAY_MS` (50 ms). Detection uses the foreground app's macOS bundle ID against a known terminal-like list (Terminal.app, iTerm2, Warp, Ghostty, Kitty, Alacritty, Hyper, WezTerm, VS Code, Cursor, Windsurf, JetBrains family) plus a case-insensitive substring match on the window title (`claude` → 800 chars / 2 newlines per chunk; `codex` → 1000 chars; `gemini` → 1000 chars). Non-terminal apps and shells with no recognised CLI fall through to a single bulk paste.
+- macOS uses Apple Events (`tell application "System Events" to keystroke "v" using command down`) which only needs the Automation entitlement; the Accessibility (CGEventPost) permission is not required for output.
+
 ## Important Invariants
 
-- `output_text()` trims trailing whitespace and appends a single space before typing/pasting into the foreground app, so successive dictations don't glue together. History stores the un-normalized text.
-- When polish + keyboard mode are both on (and Accessibility is granted on macOS), tokens are streamed directly to the foreground app via `output::keyboard::type_stream` as they arrive from the LLM. This bypasses the `output_text()` batch path. Clipboard mode and the no-polish path stay batched. The streaming task respects `abort_flag` — `on_chunk` drops chunks once abort is set. On polish failure with zero chunks typed, the pipeline falls back to batch raw output; on failure with partial output already typed, it surfaces the error and avoids double-typing.
+- `output_text()` trims trailing whitespace and appends a single space before pasting into the foreground app, so successive dictations don't glue together. History stores the un-normalized text.
+- LLM polish output is batched: the capsule renders streamed `llm:chunk` events for a live indicator, but the paste only fires once polish completes.
 - `pipeline_lock` serializes `start()` and `stop()`.
 - `abort()` sets the abort flag, drops the audio handle, notifies `stt_done`, clears accumulated text, and forces `Idle`.
 - On macOS, if Cmd+C does not change the clipboard, selected text is ignored — this avoids passing stale clipboard content to the LLM.
-- macOS Accessibility permission is checked through raw FFI because `enigo` silently drops events without it.
+- macOS Accessibility permission is checked through raw FFI (`AXIsProcessTrusted`); it is no longer required for output, but the correction watcher uses it to read the focused text field.
 - Tray tooltip and capsule UI both subscribe to `pipeline:state`; consider both when changing state semantics.
 
 ## Needs confirmation

@@ -68,9 +68,9 @@ Current prompt behavior includes:
 - translation to configured target language
 - prompt-injection resistance for transcript and selected text
 
-A single trailing space is appended to whatever is typed into the foreground app (see [Pipeline](../architecture/pipeline.md)), so successive dictations don't glue together.
+A single trailing space is appended to whatever is pasted into the foreground app (see [Pipeline](../architecture/pipeline.md)), so successive dictations don't glue together.
 
-When polish and keyboard output mode are both active, polished tokens are streamed directly into the foreground app as they arrive from the LLM ("types as it generates"), instead of waiting for the full response. Clipboard mode stays batched.
+Output is always delivered via the system clipboard plus a synthesized Cmd+V (Ctrl+V on Windows/Linux). The user's prior clipboard contents are snapshotted and restored after the paste lands. For terminal-hosted CLIs that don't handle bulk pastes well (Claude CLI, Codex CLI, Gemini CLI) the paste is split into smaller chunks with brief inter-chunk delays — see [Pipeline → Output](../architecture/pipeline.md) for the chunking constants and the list of recognised terminal targets.
 
 For Gemini models (any model name containing `gemini`), the LLM request additionally sets `reasoning_effort: "none"` to keep thinking off — `gemini-flash-lite` already defaults to no thinking, but the explicit opt-out is defensive against any future model where it might engage. Other providers silently ignore this field.
 

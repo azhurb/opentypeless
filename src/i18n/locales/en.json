@@ -21,8 +21,7 @@
     "llmProvider": "LLM Provider",
     "aiPolish": "AI Polish",
     "enabled": "Enabled",
-    "disabled": "Disabled",
-    "outputMode": "Output Mode"
+    "disabled": "Disabled"
   },
   "onboarding": {
     "welcomeTitle": "Welcome to OpenTypeless",
@@ -77,8 +76,7 @@
     "openMainWindow": "Open Main Window",
     "settings": "Settings",
     "history": "History",
-    "exit": "Exit",
-    "accessibilityRequired": "Accessibility needed — open Settings"
+    "exit": "Exit"
   },
   "settings": {
     "title": "Settings",
@@ -92,9 +90,6 @@
     "clickToConfirm": "Click again to confirm, or press another combination",
     "holdToTalk": "Hold to Talk",
     "toggleOnOff": "Toggle On/Off",
-    "outputMode": "Output Mode",
-    "keyboardSimulation": "Keyboard Simulation",
-    "clipboardPaste": "Clipboard Paste",
     "other": "Other",
     "launchAtStartup": "Launch at Startup",
     "closeToTray": "Close to system tray",
@@ -125,11 +120,7 @@
     "tauriReact": "Tauri v2 + React",
     "view": "View",
     "maxRecordingDuration": "Max Recording Duration",
-    "hideCapsuleWhenIdle": "Hide capsule when idle",
-    "accessibilityPermission": "macOS Accessibility",
-    "accessibilityGranted": "Permission granted",
-    "accessibilityRequired": "Required for keyboard output",
-    "grantPermission": "Grant Permission"
+    "hideCapsuleWhenIdle": "Hide capsule when idle"
   },
   "dictionary": {
     "word": "Word",
@@ -139,7 +130,7 @@
     "noEntries": "No entries yet. Add proper nouns to improve recognition accuracy.",
     "learnFromCorrections": {
       "label": "Learn from corrections (experimental)",
-      "description": "After dictation, OpenTypeless watches your edits for ~15 s and offers to add fixed names and terms here. Reads the focused text field via Accessibility — already granted for keyboard output."
+      "description": "After dictation, OpenTypeless watches your edits for ~15 s and offers to add fixed names and terms here. Reads the focused text field via macOS Accessibility — you'll be prompted to grant the permission on first use."
     },
     "failedToAdd": "Failed to add dictionary entry",
     "failedToRemove": "Failed to remove dictionary entry",
