@@ -11,7 +11,7 @@ This repository is a fork of [Tover0314/opentypeless](https://github.com/tover03
 ## [Unreleased]
 
 ### Changed
-- Output is now exclusively clipboard-paste with the user's prior clipboard snapshotted and restored. The "keyboard simulation" output mode and the macOS Accessibility prompt that gated it are removed; users no longer need to grant Accessibility for normal dictation.
+- Output is now exclusively clipboard-paste with the user's prior clipboard snapshotted and restored. Cmd+V (Ctrl+V on Windows/Linux) is synthesised directly via `CGEventPost`; the prior osascript / System Events round-trip is gone, so users only need to grant macOS **Accessibility** (a single grant covers both paste and the correction watcher) — no separate Automation permission is required.
 - Foreground app detection on macOS now also captures the bundle identifier, used to drive per-target paste behavior.
 
 ### Added

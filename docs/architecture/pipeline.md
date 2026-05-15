@@ -48,9 +48,9 @@ This list is grep-verified from `src-tauri/src/pipeline.rs` and `src-tauri/src/l
 
 Text is delivered exclusively via the system clipboard plus a synthesized Cmd+V (Ctrl+V on Windows/Linux). Implementation lives in `src-tauri/src/output/`:
 
-- `clipboard.rs` snapshots the user's prior plain-text clipboard, writes the dictation text, sleeps `CLIPBOARD_SETTLE_MS` (30 ms), invokes paste via `osascript` on macOS / `enigo` Ctrl+V elsewhere, then schedules a restore of the prior clipboard after `RESTORE_DELAY_MS` (500 ms).
+- `clipboard.rs` snapshots the user's prior plain-text clipboard, writes the dictation text, sleeps `CLIPBOARD_SETTLE_MS` (30 ms), invokes paste via `enigo` (Cmd+V on macOS, Ctrl+V on Windows/Linux), then schedules a restore of the prior clipboard after `RESTORE_DELAY_MS` (500 ms).
 - `chunker.rs` decides whether the paste should be split. For terminal-hosted CLIs that struggle with bulk pastes the text is broken into chunks separated by `INTER_CHUNK_DELAY_MS` (50 ms). Detection uses the foreground app's macOS bundle ID against a known terminal-like list (Terminal.app, iTerm2, Warp, Ghostty, Kitty, Alacritty, Hyper, WezTerm, VS Code, Cursor, Windsurf, JetBrains family) plus a case-insensitive substring match on the window title (`claude` → 800 chars / 2 newlines per chunk; `codex` → 1000 chars; `gemini` → 1000 chars). Non-terminal apps and shells with no recognised CLI fall through to a single bulk paste.
-- macOS uses Apple Events (`tell application "System Events" to keystroke "v" using command down`) which only needs the Automation entitlement; the Accessibility (CGEventPost) permission is not required for output.
+- macOS Cmd+V is synthesised by `enigo` via `CGEventPost`, which requires macOS **Accessibility** permission. The correction watcher uses Accessibility too, so this is a shared grant rather than a new one. There is no path to avoid Accessibility on modern macOS for keystroke synthesis; every alternative (`osascript "tell System Events to keystroke …"`, NSEvent simulation, AXUIElement post) ultimately routes through the same TCC check.
 
 ## Important Invariants
 
@@ -59,7 +59,7 @@ Text is delivered exclusively via the system clipboard plus a synthesized Cmd+V 
 - `pipeline_lock` serializes `start()` and `stop()`.
 - `abort()` sets the abort flag, drops the audio handle, notifies `stt_done`, clears accumulated text, and forces `Idle`.
 - On macOS, if Cmd+C does not change the clipboard, selected text is ignored — this avoids passing stale clipboard content to the LLM.
-- macOS Accessibility permission is checked through raw FFI (`AXIsProcessTrusted`); it is no longer required for output, but the correction watcher uses it to read the focused text field.
+- macOS Accessibility permission is checked through raw FFI (`AXIsProcessTrusted`). It is required for output (keystroke synthesis of Cmd+V) and for the correction watcher (focused-field reads). A single grant covers both.
 - Tray tooltip and capsule UI both subscribe to `pipeline:state`; consider both when changing state semantics.
 
 ## Needs confirmation
