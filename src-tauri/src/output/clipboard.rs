@@ -69,36 +69,28 @@ fn write_and_paste(clipboard: &mut arboard::Clipboard, text: &str) -> Result<()>
     invoke_paste()
 }
 
-#[cfg(target_os = "macos")]
 fn invoke_paste() -> Result<()> {
-    // Apple Events (already in entitlements) is enough for Cmd+V; this
-    // avoids requiring the Accessibility TCC grant that CGEventPost
-    // would need.
-    let status = std::process::Command::new("osascript")
-        .args([
-            "-e",
-            r#"tell application "System Events" to keystroke "v" using command down"#,
-        ])
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("osascript paste failed with exit code: {:?}", status.code());
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn invoke_paste() -> Result<()> {
+    // Send Cmd+V (macOS) or Ctrl+V (Windows/Linux) directly via CGEventPost
+    // (or the platform equivalent) — no osascript / System Events round
+    // trip. On macOS this requires Accessibility but not Automation,
+    // halving the permission surface the user must grant.
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     let mut enigo = Enigo::new(&Settings::default())
         .map_err(|e| anyhow::anyhow!("Failed to create Enigo: {:?}", e))?;
+
+    #[cfg(target_os = "macos")]
+    let modifier = Key::Meta;
+    #[cfg(not(target_os = "macos"))]
+    let modifier = Key::Control;
+
     enigo
-        .key(Key::Control, Direction::Press)
+        .key(modifier, Direction::Press)
         .map_err(|e| anyhow::anyhow!("Key press error: {:?}", e))?;
     enigo
         .key(Key::Unicode('v'), Direction::Click)
         .map_err(|e| anyhow::anyhow!("Key click error: {:?}", e))?;
     enigo
-        .key(Key::Control, Direction::Release)
+        .key(modifier, Direction::Release)
         .map_err(|e| anyhow::anyhow!("Key release error: {:?}", e))?;
     Ok(())
 }
