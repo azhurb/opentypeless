@@ -26,7 +26,7 @@ impl Default for LlmConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PolishRequest {
     pub raw_text: String,
     pub app_type: AppType,
@@ -34,6 +34,10 @@ pub struct PolishRequest {
     pub translate_enabled: bool,
     pub target_lang: String,
     pub selected_text: Option<String>,
+    /// ISO-639-1 code reported by the STT for this utterance, when available.
+    pub detected_language: Option<String>,
+    /// Codes the user has marked as expected. Empty = auto-detect.
+    pub user_languages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

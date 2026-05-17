@@ -17,6 +17,7 @@ Verified against `src-tauri/src/storage/mod.rs::Default::default`:
 | Field | Default |
 | --- | --- |
 | `stt_provider` | `glm-asr` |
+| `stt_languages` | `[]` (empty = auto-detect) |
 | `llm_provider` | `openrouter` |
 | `llm_model` | `google/gemini-2.5-flash` |
 | `polish_enabled` | `true` |
@@ -29,6 +30,14 @@ Verified against `src-tauri/src/storage/mod.rs::Default::default`:
 | `learn_from_corrections_enabled` | `false` |
 
 If you add or change a default, update this table in the same PR.
+
+### Config migrations
+
+`ConfigManager::load` runs `migrate_legacy_config` on the raw JSON value before deserializing into `AppConfig`. The migration is idempotent and so far handles one case:
+
+- Pre-multi-language installs persisted `stt_language: String` (with the sentinel `"multi"`). Load-time migration converts `"multi"` / `""` to `stt_languages = []` and any other code to `[code]`, then removes the legacy key. The migrated config is written back on the same load.
+
+Add new migrations to `migrate_legacy_config` rather than re-mapping fields downstream; tests live in `storage::config_migration_tests`.
 
 ## SQLite (`<app_data_dir>/opentypeless.db`)
 

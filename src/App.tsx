@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import i18n from './i18n'
 import { useTauriEvents } from './hooks/useTauriEvents'
 import { useTheme } from './hooks/useTheme'
+import { useDetectedLanguageNotifier } from './hooks/useDetectedLanguageNotifier'
 import { useAppStore } from './stores/appStore'
 import { useRoute } from './lib/router'
 import {
@@ -52,6 +53,7 @@ function CapsuleApp() {
 function MainApp() {
   useTauriEvents()
   useTheme()
+  useDetectedLanguageNotifier()
 
   const onboardingCompleted = useAppStore((s) => s.onboardingCompleted)
   const setOnboardingCompleted = useAppStore((s) => s.setOnboardingCompleted)
@@ -85,10 +87,7 @@ function MainApp() {
         // History and dictionary are post-onboarding views — skip them
         // during the flow so we don't pay the I/O for nothing.
         if (done) {
-          const [history, dictionary] = await Promise.all([
-            getHistory(200, 0),
-            getDictionary(),
-          ])
+          const [history, dictionary] = await Promise.all([getHistory(200, 0), getDictionary()])
           setHistory(history)
           setDictionary(dictionary)
         }

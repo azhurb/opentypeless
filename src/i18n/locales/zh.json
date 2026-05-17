@@ -127,6 +127,10 @@
     "connectionFailed": "连接失败",
     "storedLocally": "存储在本地设备上。绝不会发送到其他地方。",
     "sttLanguage": "语言",
+    "sttLanguages": "识别语言",
+    "sttLanguagesAutoHint": "自动检测 — 可使用任何支持的语言讲话。",
+    "sttLanguagesSingleHint": "已为所选语言优化；其他语言识别可能较弱。",
+    "sttLanguagesMultiHint": "在你的选择中自动检测；润色将偏向这些语言。",
     "model": "模型",
     "fetchModels": "获取可用模型",
     "modelsAvailable": "{{count}} 个模型可用",
@@ -186,5 +190,8 @@
     "somethingWentWrong": "出了点问题",
     "unexpectedError": "发生了意外错误。",
     "reload": "重新加载"
+  },
+  "notifications": {
+    "detectedLanguage": "检测到 {{language}} — 是否在设置中添加？"
   }
 }

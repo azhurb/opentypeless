@@ -3,7 +3,7 @@ import { useAppStore } from '../../stores/appStore'
 import { STT_PROVIDERS, LANGUAGES } from '../../lib/constants'
 import { benchSttConnection } from '../../lib/tauri'
 import { FormField } from './shared/FormField'
-import { CheckCircle2, XCircle, Loader2 } from 'lucide-react'
+import { CheckCircle2, XCircle, Loader2, Check } from 'lucide-react'
 
 export function SttPane() {
   const config = useAppStore((s) => s.config)
@@ -84,18 +84,40 @@ export function SttPane() {
         <p className="text-[11px] text-text-tertiary mt-1.5">{t('settings.storedLocally')}</p>
       </FormField>
 
-      <FormField label={t('settings.sttLanguage')}>
-        <select
-          value={config.stt_language}
-          onChange={(e) => updateConfig({ stt_language: e.target.value })}
-          className="w-full px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
-        >
-          {LANGUAGES.map((l) => (
-            <option key={l.value} value={l.value}>
-              {l.label}
-            </option>
-          ))}
-        </select>
+      <FormField label={t('settings.sttLanguages')}>
+        <div className="flex flex-wrap gap-1.5">
+          {LANGUAGES.map((l) => {
+            const selected = config.stt_languages.includes(l.value)
+            return (
+              <button
+                key={l.value}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => {
+                  const next = selected
+                    ? config.stt_languages.filter((c) => c !== l.value)
+                    : [...config.stt_languages, l.value]
+                  updateConfig({ stt_languages: next })
+                }}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[12px] border transition-colors cursor-pointer ${
+                  selected
+                    ? 'bg-accent/10 border-accent text-accent'
+                    : 'bg-bg-secondary border-border text-text-primary hover:border-text-tertiary'
+                }`}
+              >
+                {selected && <Check size={12} />}
+                {l.label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-[11px] text-text-tertiary mt-2">
+          {config.stt_languages.length === 0
+            ? t('settings.sttLanguagesAutoHint')
+            : config.stt_languages.length === 1
+              ? t('settings.sttLanguagesSingleHint')
+              : t('settings.sttLanguagesMultiHint')}
+        </p>
       </FormField>
     </div>
   )

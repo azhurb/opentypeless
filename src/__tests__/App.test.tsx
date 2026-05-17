@@ -81,7 +81,7 @@ import App from '../App'
 const MOCK_CONFIG = {
   stt_provider: 'groq-whisper',
   stt_api_key: 'real-stt-key-from-disk',
-  stt_language: 'en',
+  stt_languages: ['en'],
   llm_provider: 'gemini',
   llm_api_key: 'real-llm-key-from-disk',
   llm_model: 'models/gemini-2.5-flash',

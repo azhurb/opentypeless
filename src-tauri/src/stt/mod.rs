@@ -11,7 +11,12 @@ use whisper_compat::{WhisperCompatConfig, WhisperCompatProvider};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SttConfig {
     pub api_key: String,
-    pub language: Option<String>,
+    /// User-selected language hints. Empty = let the provider auto-detect.
+    /// Whisper-compatible providers accept at most one hint at the wire,
+    /// so adapters pin only when `languages.len() == 1` and otherwise omit
+    /// the field (auto-detect). Deepgram's `multi` mode covers the >1 case
+    /// natively.
+    pub languages: Vec<String>,
     pub smart_format: bool,
     pub sample_rate: u32,
 }
@@ -20,7 +25,7 @@ impl Default for SttConfig {
     fn default() -> Self {
         Self {
             api_key: String::new(),
-            language: None,
+            languages: Vec::new(),
             smart_format: true,
             sample_rate: 16000,
         }
@@ -29,20 +34,35 @@ impl Default for SttConfig {
 
 #[derive(Debug, Clone)]
 pub enum TranscriptEvent {
-    Partial { text: String },
-    Final { text: String, confidence: f32 },
+    Partial {
+        text: String,
+    },
+    Final {
+        text: String,
+        confidence: f32,
+        /// ISO-639-1 code of the language the provider detected, when reported.
+        language: Option<String>,
+    },
     SpeechStarted,
     SpeechEnded,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
+
+/// Result returned by `SttProvider::disconnect` for file-based providers that
+/// produce the transcript on close. Streaming providers return `None` here and
+/// emit `TranscriptEvent::Final` instead.
+pub type DisconnectResult = Option<(String, Option<String>)>;
 
 #[async_trait]
 pub trait SttProvider: Send + Sync {
     async fn connect(&mut self, config: &SttConfig) -> Result<()>;
     async fn send_audio(&mut self, chunk: &[u8]) -> Result<()>;
     async fn recv_transcript(&mut self) -> Result<Option<TranscriptEvent>>;
-    /// Disconnect and optionally return a final transcript (for file-based providers).
-    async fn disconnect(&mut self) -> Result<Option<String>>;
+    /// Disconnect and optionally return a final `(text, detected_language)` pair
+    /// for file-based providers. Streaming providers return `Ok(None)`.
+    async fn disconnect(&mut self) -> Result<DisconnectResult>;
     fn name(&self) -> &str;
 }
 

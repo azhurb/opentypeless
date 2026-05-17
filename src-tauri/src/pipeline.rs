@@ -167,6 +167,10 @@ pub struct PipelineHandle {
     audio_handle: Arc<Mutex<Option<AudioCaptureHandle>>>,
     audio_volume: Arc<Mutex<f32>>,
     accumulated_text: Arc<Mutex<String>>,
+    /// Last language code reported by the STT for this utterance, if any.
+    /// Populated from `TranscriptEvent::Final.language` (streaming) or from
+    /// the second element of the `disconnect()` tuple (file-based).
+    detected_language: Arc<Mutex<Option<String>>>,
     stt_done: Arc<Notify>,
     abort_flag: Arc<AtomicBool>,
     preloaded_config: Arc<Mutex<Option<storage::AppConfig>>>,
@@ -191,6 +195,7 @@ impl PipelineHandle {
             audio_handle: Arc::new(Mutex::new(None)),
             audio_volume: Arc::new(Mutex::new(0.0)),
             accumulated_text: Arc::new(Mutex::new(String::new())),
+            detected_language: Arc::new(Mutex::new(None)),
             stt_done: Arc::new(Notify::new()),
             abort_flag: Arc::new(AtomicBool::new(false)),
             preloaded_config: Arc::new(Mutex::new(None)),
@@ -249,8 +254,9 @@ impl PipelineHandle {
         // Unblock stop() if it's waiting on stt_done.notified()
         self.stt_done.notify_one();
 
-        // Clear accumulated text
+        // Clear accumulated text + detected language
         self.accumulated_text.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        *self.detected_language.lock().unwrap_or_else(|e| e.into_inner()) = None;
 
         // Force state to Idle — emits pipeline:state event to sync frontend
         self.set_state(PipelineState::Idle);
@@ -379,11 +385,15 @@ impl PipelineHandle {
         }
         crate::refresh_tray(&self.app_handle);
 
-        // Clear accumulated text
+        // Clear accumulated text + detected language
         self.accumulated_text
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        *self
+            .detected_language
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
 
         // P0-2: Load config BEFORE starting audio capture — fail fast on missing API key
         let config_data = self.load_config().await;
@@ -406,10 +416,10 @@ impl PipelineHandle {
             .unwrap_or_else(|e| e.into_inner()) = Some(dict_words);
 
         tracing::debug!(
-            "Pipeline using config: stt_provider={}, stt_key_len={}, stt_lang={}",
+            "Pipeline using config: stt_provider={}, stt_key_len={}, stt_langs={:?}",
             config_data.stt_provider,
             config_data.stt_api_key.len(),
-            config_data.stt_language
+            config_data.stt_languages
         );
 
         // Guard: empty API key — bail before starting audio
@@ -437,11 +447,7 @@ impl PipelineHandle {
         // P0-3: Pre-connect STT provider before spawning task
         let stt_config = SttConfig {
             api_key: config_data.stt_api_key.clone(),
-            language: if config_data.stt_language == "multi" {
-                None
-            } else {
-                Some(config_data.stt_language.clone())
-            },
+            languages: config_data.stt_languages.clone(),
             smart_format: true,
             sample_rate: 16000,
         };
@@ -545,6 +551,7 @@ impl PipelineHandle {
         // STT streaming task — provider is already connected
         let app_handle = self.app_handle.clone();
         let accumulated = self.accumulated_text.clone();
+        let detected_lang = self.detected_language.clone();
         let stt_done = self.stt_done.clone();
 
         tokio::spawn(async move {
@@ -559,11 +566,16 @@ impl PipelineHandle {
                             None => {
                                 // Audio channel closed — disconnect and capture final transcript
                                 match provider.disconnect().await {
-                                    Ok(Some(text)) => {
+                                    Ok(Some((text, lang))) => {
                                         let mut acc = accumulated.lock().unwrap_or_else(|e| e.into_inner());
                                         acc.push_str(&text);
                                         let current = acc.clone();
                                         drop(acc);
+                                        if let Some(code) = lang {
+                                            *detected_lang
+                                                .lock()
+                                                .unwrap_or_else(|e| e.into_inner()) = Some(code);
+                                        }
                                         let _ = app_handle.emit("stt:final", &current);
                                     }
                                     Ok(None) => {}
@@ -581,12 +593,17 @@ impl PipelineHandle {
                             Ok(Some(TranscriptEvent::Partial { text })) => {
                                 let _ = app_handle.emit("stt:partial", &text);
                             }
-                            Ok(Some(TranscriptEvent::Final { text, .. })) => {
+                            Ok(Some(TranscriptEvent::Final { text, language, .. })) => {
                                 let mut acc = accumulated.lock().unwrap_or_else(|e| e.into_inner());
                                 acc.push_str(&text);
                                 acc.push(' ');
                                 let current = acc.clone();
                                 drop(acc);
+                                if let Some(code) = language {
+                                    *detected_lang
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner()) = Some(code);
+                                }
                                 let _ = app_handle.emit("stt:final", &current);
                             }
                             Ok(Some(TranscriptEvent::Error { message })) => {
@@ -759,6 +776,11 @@ impl PipelineHandle {
             .unwrap_or_else(|e| e.into_inner())
             .trim()
             .to_string();
+        let detected_language = self
+            .detected_language
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         if raw_text.is_empty() {
             let _ = self
@@ -814,6 +836,8 @@ impl PipelineHandle {
                 translate_enabled: config.translate_enabled,
                 target_lang: config.target_lang.clone(),
                 selected_text,
+                detected_language: detected_language.clone(),
+                user_languages: config.stt_languages.clone(),
             };
 
             let polish_result = provider.polish(&llm_config, &req, Some(&on_chunk)).await;
@@ -910,6 +934,7 @@ impl PipelineHandle {
                 "llm_ms": llm_elapsed.as_millis() as u64,
                 "total_ms": total_elapsed.as_millis() as u64,
                 "recording_ms": duration_ms,
+                "detected_language": detected_language,
             }),
         );
 
@@ -922,7 +947,7 @@ impl PipelineHandle {
             app_type: format!("{:?}", app_ctx.app_type),
             raw_text,
             polished_text: final_text.clone(),
-            language: None,
+            language: detected_language.clone(),
             duration_ms,
         };
         if let Err(e) = self

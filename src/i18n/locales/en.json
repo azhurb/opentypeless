@@ -127,6 +127,10 @@
     "connectionFailed": "Connection failed",
     "storedLocally": "Stored locally on your device. Never sent anywhere else.",
     "sttLanguage": "Language",
+    "sttLanguages": "Recognized Languages",
+    "sttLanguagesAutoHint": "Auto Detect — speak any supported language.",
+    "sttLanguagesSingleHint": "Optimized for the selected language; others may transcribe less reliably.",
+    "sttLanguagesMultiHint": "Auto-detect among your selections; polish will favor these.",
     "model": "Model",
     "fetchModels": "Fetch available models",
     "modelsAvailable": "{{count}} models available",
@@ -186,5 +190,8 @@
     "somethingWentWrong": "Something went wrong",
     "unexpectedError": "An unexpected error occurred.",
     "reload": "Reload"
+  },
+  "notifications": {
+    "detectedLanguage": "Detected {{language}} — add it in Settings?"
   }
 }

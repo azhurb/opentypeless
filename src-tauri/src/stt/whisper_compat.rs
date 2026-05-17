@@ -1,7 +1,194 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::{SttConfig, SttProvider, TranscriptEvent};
+use super::{DisconnectResult, SttConfig, SttProvider, TranscriptEvent};
+
+/// Build the multipart text fields for a Whisper-compatible transcription
+/// request. Pure helper so the form construction is unit-testable.
+///
+/// The `languages` rule mirrors the Whisper API's wire constraint: the API
+/// takes at most one ISO-639-1 hint or none (auto). We therefore pin only
+/// when the user has selected exactly one language; an empty or multi-element
+/// set omits the field so the provider auto-detects.
+fn build_form_text_fields(
+    model: &str,
+    languages: &[String],
+    extra: &[(&str, &str)],
+) -> Vec<(String, String)> {
+    let mut fields = Vec::with_capacity(2 + extra.len() + 1);
+    fields.push(("model".to_string(), model.to_string()));
+    fields.push(("response_format".to_string(), "verbose_json".to_string()));
+    if languages.len() == 1 {
+        fields.push(("language".to_string(), languages[0].clone()));
+    }
+    for &(k, v) in extra {
+        fields.push((k.to_string(), v.to_string()));
+    }
+    fields
+}
+
+/// Parse a Whisper-compatible `verbose_json` response into
+/// `(trimmed_text, detected_language_code)`. The language field is optional —
+/// some providers omit it for `verbose_json`; if absent or unrecognized we
+/// return `None` rather than failing.
+fn parse_response(body: &str) -> Result<(String, Option<String>)> {
+    let v: serde_json::Value = serde_json::from_str(body)?;
+    let text = v["text"].as_str().unwrap_or("").trim().to_string();
+    let lang = v["language"].as_str().and_then(normalize_language);
+    Ok((text, lang))
+}
+
+/// Map a `verbose_json` `language` value (which providers return as either a
+/// two-letter ISO-639-1 code or a lowercase English name like `"english"`)
+/// to the short codes we use internally. Returns `None` for unknown values
+/// so callers can fall back gracefully instead of crashing on novel labels.
+fn normalize_language(name: &str) -> Option<String> {
+    let lower = name.trim().to_lowercase();
+    if lower.is_empty() {
+        return None;
+    }
+    if lower.len() == 2 && lower.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Some(lower);
+    }
+    let code = match lower.as_str() {
+        "english" => "en",
+        "chinese" | "mandarin" => "zh",
+        "japanese" => "ja",
+        "korean" => "ko",
+        "french" => "fr",
+        "german" => "de",
+        "spanish" => "es",
+        "portuguese" => "pt",
+        "russian" => "ru",
+        "arabic" => "ar",
+        "hindi" => "hi",
+        "thai" => "th",
+        "vietnamese" => "vi",
+        "italian" => "it",
+        "dutch" => "nl",
+        "turkish" => "tr",
+        "polish" => "pl",
+        "ukrainian" => "uk",
+        "indonesian" => "id",
+        "malay" => "ms",
+        _ => return None,
+    };
+    Some(code.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_form_omits_language_when_set_is_empty() {
+        let fields = build_form_text_fields("whisper-1", &[], &[]);
+        assert!(
+            !fields.iter().any(|(k, _)| k == "language"),
+            "empty language set must omit the field so STT auto-detects"
+        );
+    }
+
+    #[test]
+    fn build_form_pins_single_language() {
+        let fields = build_form_text_fields("whisper-1", &["en".to_string()], &[]);
+        assert!(fields
+            .iter()
+            .any(|(k, v)| k == "language" && v == "en"));
+    }
+
+    #[test]
+    fn build_form_omits_language_when_multiple_selected() {
+        let fields = build_form_text_fields(
+            "whisper-1",
+            &["en".to_string(), "de".to_string()],
+            &[],
+        );
+        assert!(
+            !fields.iter().any(|(k, _)| k == "language"),
+            "Whisper API cannot take multiple language hints; the request must omit the field and auto-detect"
+        );
+    }
+
+    #[test]
+    fn build_form_always_requests_verbose_json() {
+        let fields = build_form_text_fields("whisper-1", &[], &[]);
+        assert!(fields
+            .iter()
+            .any(|(k, v)| k == "response_format" && v == "verbose_json"));
+    }
+
+    #[test]
+    fn build_form_includes_model_and_extras() {
+        let fields = build_form_text_fields(
+            "glm-asr-2512",
+            &[],
+            &[("stream", "false")],
+        );
+        assert!(fields
+            .iter()
+            .any(|(k, v)| k == "model" && v == "glm-asr-2512"));
+        assert!(fields.iter().any(|(k, v)| k == "stream" && v == "false"));
+    }
+
+    #[test]
+    fn parse_response_extracts_text_when_no_language_field() {
+        let body = r#"{"text": "Hello world"}"#;
+        let (text, lang) = parse_response(body).unwrap();
+        assert_eq!(text, "Hello world");
+        assert_eq!(lang, None);
+    }
+
+    #[test]
+    fn parse_response_extracts_text_and_detected_code_passthrough() {
+        let body = r#"{"text": "Hallo Welt", "language": "de"}"#;
+        let (text, lang) = parse_response(body).unwrap();
+        assert_eq!(text, "Hallo Welt");
+        assert_eq!(lang.as_deref(), Some("de"));
+    }
+
+    #[test]
+    fn parse_response_normalizes_english_word_to_code() {
+        let body = r#"{"text": "Hello", "language": "english"}"#;
+        let (_, lang) = parse_response(body).unwrap();
+        assert_eq!(lang.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn parse_response_normalizes_german_word_to_code() {
+        let body = r#"{"text": "Hallo", "language": "german"}"#;
+        let (_, lang) = parse_response(body).unwrap();
+        assert_eq!(lang.as_deref(), Some("de"));
+    }
+
+    #[test]
+    fn parse_response_returns_none_for_unknown_language_name() {
+        let body = r#"{"text": "Hi", "language": "klingon"}"#;
+        let (_, lang) = parse_response(body).unwrap();
+        assert_eq!(lang, None, "unknown language names fall back to None, not crash");
+    }
+
+    #[test]
+    fn parse_response_trims_text() {
+        let body = r#"{"text": "  spaced  "}"#;
+        let (text, _) = parse_response(body).unwrap();
+        assert_eq!(text, "spaced");
+    }
+
+    #[test]
+    fn normalize_language_passes_through_two_letter_iso_codes() {
+        assert_eq!(normalize_language("en").as_deref(), Some("en"));
+        assert_eq!(normalize_language("DE").as_deref(), Some("de"));
+        assert_eq!(normalize_language(" fr ").as_deref(), Some("fr"));
+    }
+
+    #[test]
+    fn normalize_language_rejects_empty_and_unknown() {
+        assert_eq!(normalize_language(""), None);
+        assert_eq!(normalize_language("   "), None);
+        assert_eq!(normalize_language("klingon"), None);
+    }
+}
 
 /// Configuration for a Whisper-compatible HTTP file-upload STT provider.
 pub struct WhisperCompatConfig {
@@ -103,7 +290,7 @@ impl SttProvider for WhisperCompatProvider {
         Ok(None)
     }
 
-    async fn disconnect(&mut self) -> Result<Option<String>> {
+    async fn disconnect(&mut self) -> Result<DisconnectResult> {
         let config = match &self.stt_config {
             Some(c) => c.clone(),
             None => return Ok(None),
@@ -130,20 +317,13 @@ impl SttProvider for WhisperCompatProvider {
             .file_name("audio.wav")
             .mime_str("audio/wav")?;
 
-        let mut form = reqwest::multipart::Form::new()
-            .text("model", self.provider_config.model.to_string())
-            .part("file", file_part);
-
-        // Language hint (OpenAI/Groq support `language` field, others use `prompt`)
-        if let Some(ref lang) = config.language {
-            if lang != "multi" {
-                form = form.text("language", lang.clone());
-            }
-        }
-
-        // Provider-specific extra fields
-        for &(key, value) in self.provider_config.extra_fields {
-            form = form.text(key.to_string(), value.to_string());
+        let mut form = reqwest::multipart::Form::new().part("file", file_part);
+        for (k, v) in build_form_text_fields(
+            self.provider_config.model,
+            &config.languages,
+            self.provider_config.extra_fields,
+        ) {
+            form = form.text(k, v);
         }
 
         let resp = self
@@ -181,19 +361,19 @@ impl SttProvider for WhisperCompatProvider {
             );
         }
 
-        let v: serde_json::Value = serde_json::from_str(&body)?;
-        let text = v["text"].as_str().unwrap_or("").trim().to_string();
+        let (text, detected) = parse_response(&body)?;
 
         tracing::info!(
-            "{} transcription: {} chars",
+            "{} transcription: {} chars (detected={:?})",
             self.provider_config.provider_name,
-            text.len()
+            text.len(),
+            detected
         );
 
         if text.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(text))
+            Ok(Some((text, detected)))
         }
     }
 
