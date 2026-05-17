@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::{SttConfig, SttProvider, TranscriptEvent};
+use super::{DisconnectResult, SttConfig, SttProvider, TranscriptEvent};
 
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -89,9 +89,13 @@ impl SttProvider for AssemblyAiProvider {
                         }
                         let is_formatted = v["turn_is_formatted"].as_bool().unwrap_or(false);
                         if is_formatted {
+                            // AssemblyAI streaming doesn't currently report
+                            // detected language; the URL also doesn't accept
+                            // a language hint. Both are a follow-up.
                             Ok(Some(TranscriptEvent::Final {
                                 text: transcript,
                                 confidence: 1.0,
+                                language: None,
                             }))
                         } else {
                             Ok(Some(TranscriptEvent::Partial { text: transcript }))
@@ -122,7 +126,7 @@ impl SttProvider for AssemblyAiProvider {
         }
     }
 
-    async fn disconnect(&mut self) -> Result<Option<String>> {
+    async fn disconnect(&mut self) -> Result<DisconnectResult> {
         if let Some(ws) = &mut self.ws {
             let terminate = serde_json::json!({"type": "Terminate"});
             let _ = ws.send(Message::Text(terminate.to_string())).await;

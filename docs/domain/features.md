@@ -80,20 +80,21 @@ Needs confirmation:
 
 ## Language Support And Auto Detection
 
-User-facing promise: users can speak in many languages, use auto detection, or choose a preferred language.
+User-facing promise: users mark zero or more languages they expect to speak; the STT auto-detects, the polish prompt is biased toward the marked set, and dictation history shows the detected language per row.
 
 Repo evidence:
 
-- STT language setting lives in `AppConfig.stt_language`.
-- `src/lib/constants.ts` exposes `Auto Detect` plus 21 language options for STT and target translation.
-- `src-tauri/src/pipeline.rs` maps `stt_language == "multi"` to `None` for most provider configuration.
-- `src-tauri/src/llm/prompt.rs` maps target-language codes for translation prompt text.
-- `README.md` says STT support is provider-dependent and can reach 99+ languages.
+- STT languages live in `AppConfig.stt_languages: Vec<String>` (empty = auto-detect).
+- `src/lib/constants.ts` exposes 20 language options; the Settings UI renders them as multi-select chips (`src/components/Settings/SttPane.tsx`). Selecting zero languages is the canonical "auto" state — there is no `"multi"` sentinel anymore.
+- A one-shot migration in `ConfigManager::load` (`src-tauri/src/storage/mod.rs::migrate_legacy_config`) converts the pre-existing single-value `stt_language` field on disk: `"multi"` and empty become `[]`; any other code becomes `[code]`. After migration the old field is removed.
+- Wire mapping (see [Providers → Language hint mapping rule](../architecture/providers.md#language-hint-mapping-rule)): Whisper-compatible adapters pin a `language=` form field only when exactly one is selected; Deepgram pins via URL or falls back to its native `multi` mode.
+- Detected language is captured from STT responses and threaded into the polish prompt + history + a `pipeline:timing.detected_language` event (see [Pipeline → Detected language threading](../architecture/pipeline.md#detected-language-threading)).
+- `src-tauri/src/llm/prompt.rs` injects a one-line context clause when detected language is known and lists the user's configured set; both pass through a strict display-name map to avoid prompt injection from wire-supplied values.
+- A rate-limited toast (`src/hooks/useDetectedLanguageNotifier.ts`) tells the user when the STT detected a language not in their set; cooldown is 10 s per language code.
 
 Needs confirmation:
 
-- The exact 99-language list is provider-specific and is not stored in this repo.
-- Auto-detection behavior depends on the selected STT provider.
+- Whether GLM-ASR and SiliconFlow report `language` under `response_format=verbose_json`. Both currently accept the field silently; the parser falls back to no badge if absent.
 
 ## Global Hotkey
 

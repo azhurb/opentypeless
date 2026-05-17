@@ -6,7 +6,8 @@ import * as tauri from '../../../lib/tauri'
 // Mock Tauri
 vi.mock('../../../lib/tauri')
 
-// Mock i18n
+// Mock i18n — return the key for translations we don't override so assertions
+// can match against either the localized string or the raw key.
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string) => {
@@ -18,7 +19,10 @@ vi.mock('react-i18next', () => ({
         'settings.connectionSuccess': 'Connection successful',
         'settings.connectionFailed': 'Connection failed',
         'settings.storedLocally': 'Stored locally',
-        'settings.sttLanguage': 'STT Language',
+        'settings.sttLanguages': 'Recognized Languages',
+        'settings.sttLanguagesAutoHint': 'Auto Detect — speak any supported language.',
+        'settings.sttLanguagesSingleHint': 'Optimized for this language.',
+        'settings.sttLanguagesMultiHint': 'Auto-detect among your selections.',
       }
       return translations[key] || key
     },
@@ -30,7 +34,7 @@ const mockAppStore = {
   config: {
     stt_provider: 'deepgram' as string,
     stt_api_key: '',
-    stt_language: 'en',
+    stt_languages: ['en'] as string[],
   },
   updateConfig: vi.fn(),
   sttTestStatus: 'idle' as 'idle' | 'testing' | 'success' | 'error',
@@ -50,16 +54,13 @@ vi.mock('../../../stores/appStore', () => ({
 
 describe('SttPane', () => {
   beforeEach(() => {
-    // Reset mock store state
     mockAppStore.config = {
       stt_provider: 'deepgram',
       stt_api_key: '',
-      stt_language: 'en',
+      stt_languages: ['en'],
     }
     mockAppStore.sttTestStatus = 'idle'
     mockAppStore.sttLatencyMs = null
-
-    // Clear all mock function calls
     vi.clearAllMocks()
   })
 
@@ -71,15 +72,13 @@ describe('SttPane', () => {
   describe('Provider selection', () => {
     it('renders provider dropdown with current value', () => {
       render(<SttPane />)
-      const selects = screen.getAllByRole('combobox')
-      const providerSelect = selects[0] // First select is provider
+      const providerSelect = screen.getByRole('combobox')
       expect(providerSelect).toHaveValue('deepgram')
     })
 
     it('updates config and resets state when provider changes', () => {
       render(<SttPane />)
-      const selects = screen.getAllByRole('combobox')
-      const providerSelect = selects[0]
+      const providerSelect = screen.getByRole('combobox')
 
       fireEvent.change(providerSelect, { target: { value: 'assemblyai' } })
 
@@ -117,16 +116,14 @@ describe('SttPane', () => {
   describe('Test button and latency display', () => {
     it('test button is disabled when API key is empty', () => {
       render(<SttPane />)
-      const buttons = screen.getAllByRole('button', { name: /test/i })
-      const button = buttons[0]
+      const button = screen.getByRole('button', { name: /test/i })
       expect(button).toBeDisabled()
     })
 
     it('test button is enabled when API key is present', () => {
       mockAppStore.config.stt_api_key = 'sk-test123'
       render(<SttPane />)
-      const buttons = screen.getAllByRole('button', { name: /test/i })
-      const button = buttons[0]
+      const button = screen.getByRole('button', { name: /test/i })
       expect(button).not.toBeDisabled()
     })
 
@@ -134,8 +131,7 @@ describe('SttPane', () => {
       mockAppStore.config.stt_api_key = 'sk-test123'
       mockAppStore.sttTestStatus = 'testing'
       render(<SttPane />)
-      const buttons = screen.getAllByRole('button', { name: /test/i })
-      const button = buttons[0]
+      const button = screen.getByRole('button', { name: /test/i })
       expect(button).toBeDisabled()
     })
 
@@ -145,8 +141,7 @@ describe('SttPane', () => {
 
       mockAppStore.config.stt_api_key = 'sk-test123'
       render(<SttPane />)
-      const buttons = screen.getAllByRole('button', { name: /test/i })
-      const button = buttons[0]
+      const button = screen.getByRole('button', { name: /test/i })
 
       fireEvent.click(button)
 
@@ -197,62 +192,54 @@ describe('SttPane', () => {
     })
   })
 
-  describe('Language selection', () => {
-    it('renders language dropdown with current value', () => {
+  describe('Language multi-select', () => {
+    it('renders one chip per supported language with selected state from config', () => {
+      mockAppStore.config.stt_languages = ['en', 'de']
       render(<SttPane />)
-      const selects = screen.getAllByRole('combobox')
-      const languageSelect = selects[1] // Second select is language
-      expect(languageSelect).toHaveValue('en')
+      const en = screen.getByRole('button', { name: /English/i })
+      const de = screen.getByRole('button', { name: /Deutsch/i })
+      const fr = screen.getByRole('button', { name: /Français/i })
+      expect(en).toHaveAttribute('aria-pressed', 'true')
+      expect(de).toHaveAttribute('aria-pressed', 'true')
+      expect(fr).toHaveAttribute('aria-pressed', 'false')
     })
 
-    it('updates config when language changes', () => {
+    it('adds a language when an unselected chip is clicked', () => {
+      mockAppStore.config.stt_languages = ['en']
       render(<SttPane />)
-      const selects = screen.getAllByRole('combobox')
-      const languageSelect = selects[1]
-
-      fireEvent.change(languageSelect, { target: { value: 'zh' } })
-
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ stt_language: 'zh' })
-    })
-  })
-
-  describe('Integration: state reset on config changes', () => {
-    it('resets latency when API key changes after successful test', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
-      mockAppStore.sttTestStatus = 'success'
-      mockAppStore.sttLatencyMs = 234
-
-      const { container } = render(<SttPane />)
-
-      // Verify latency is displayed
-      expect(screen.getByText('234ms')).toBeInTheDocument()
-
-      // Change API key
-      const input = container.querySelector(
-        'input[placeholder="Enter API Key"]',
-      ) as HTMLInputElement
-      fireEvent.change(input, { target: { value: 'sk-new-key' } })
-
-      // Verify state was reset
-      expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
-      expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
+      const de = screen.getByRole('button', { name: /Deutsch/i })
+      fireEvent.click(de)
+      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
+        stt_languages: ['en', 'de'],
+      })
     })
 
-    it('resets latency when provider changes after successful test', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
-      mockAppStore.sttTestStatus = 'success'
-      mockAppStore.sttLatencyMs = 234
-
+    it('removes a language when a selected chip is clicked', () => {
+      mockAppStore.config.stt_languages = ['en', 'de']
       render(<SttPane />)
+      const en = screen.getByRole('button', { name: /English/i })
+      fireEvent.click(en)
+      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
+        stt_languages: ['de'],
+      })
+    })
 
-      // Change provider
-      const selects = screen.getAllByRole('combobox')
-      const providerSelect = selects[0]
-      fireEvent.change(providerSelect, { target: { value: 'assemblyai' } })
+    it('shows the auto-detect hint when no languages are selected', () => {
+      mockAppStore.config.stt_languages = []
+      render(<SttPane />)
+      expect(screen.getByText(/Auto Detect/i)).toBeInTheDocument()
+    })
 
-      // Verify state was reset
-      expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
-      expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
+    it('shows the single-language hint when one language is selected', () => {
+      mockAppStore.config.stt_languages = ['en']
+      render(<SttPane />)
+      expect(screen.getByText(/Optimized for this language/i)).toBeInTheDocument()
+    })
+
+    it('shows the multi-language hint when 2+ languages are selected', () => {
+      mockAppStore.config.stt_languages = ['en', 'de']
+      render(<SttPane />)
+      expect(screen.getByText(/Auto-detect among your selections/i)).toBeInTheDocument()
     })
   })
 })

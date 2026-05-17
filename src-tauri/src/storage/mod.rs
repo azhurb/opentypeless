@@ -10,7 +10,7 @@ use tauri_plugin_store::StoreExt;
 pub struct AppConfig {
     pub stt_provider: String,
     pub stt_api_key: String,
-    pub stt_language: String,
+    pub stt_languages: Vec<String>,
     pub llm_provider: String,
     pub llm_api_key: String,
     pub llm_model: String,
@@ -35,7 +35,7 @@ impl Default for AppConfig {
         Self {
             stt_provider: "glm-asr".to_string(),
             stt_api_key: String::new(),
-            stt_language: "multi".to_string(),
+            stt_languages: Vec::new(),
             llm_provider: "openrouter".to_string(),
             llm_api_key: String::new(),
             llm_model: "google/gemini-2.5-flash".to_string(),
@@ -60,6 +60,32 @@ impl Default for AppConfig {
     }
 }
 
+/// One-shot migration applied at config load time.
+///
+/// Converts the legacy single-string `stt_language` field into the new
+/// multi-value `stt_languages` array. The legacy sentinel `"multi"` and any
+/// empty string become an empty array (auto-detect); any other code becomes
+/// a singleton list.
+///
+/// Returns `true` if `value` was mutated.
+fn migrate_legacy_config(value: &mut serde_json::Value) -> bool {
+    let Some(obj) = value.as_object_mut() else {
+        return false;
+    };
+    if !obj.contains_key("stt_language") {
+        return false;
+    }
+    let legacy = obj.remove("stt_language");
+    if !obj.contains_key("stt_languages") {
+        let codes: Vec<String> = match legacy {
+            Some(serde_json::Value::String(s)) if !s.is_empty() && s != "multi" => vec![s],
+            _ => Vec::new(),
+        };
+        obj.insert("stt_languages".to_string(), serde_json::json!(codes));
+    }
+    true
+}
+
 // ─── ConfigManager (tauri-plugin-store backed) ───
 
 pub struct ConfigManager {
@@ -80,15 +106,28 @@ impl ConfigManager {
             return Ok(config);
         }
 
-        let config = match self.app_handle.store("settings.json") {
+        let (config, migrated) = match self.app_handle.store("settings.json") {
             Ok(store) => match store.get("app_config") {
-                Some(val) => serde_json::from_value::<AppConfig>(val.clone()).unwrap_or_default(),
-                None => AppConfig::default(),
+                Some(val) => {
+                    let mut v = val.clone();
+                    let mutated = migrate_legacy_config(&mut v);
+                    let parsed = serde_json::from_value::<AppConfig>(v).unwrap_or_default();
+                    (parsed, mutated)
+                }
+                None => (AppConfig::default(), false),
             },
-            Err(_) => AppConfig::default(),
+            Err(_) => (AppConfig::default(), false),
         };
 
         *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(config.clone());
+
+        if migrated {
+            // Best-effort: persist the migrated shape so future loads are clean.
+            // If the write fails (locked file, etc.) we still have the in-memory
+            // migrated config — next save will overwrite anyway.
+            let _ = self.save(&config).await;
+        }
+
         Ok(config)
     }
 
@@ -330,6 +369,89 @@ impl DictionaryStore {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|r| r.ok()).collect()
+    }
+}
+
+#[cfg(test)]
+mod config_migration_tests {
+    use super::migrate_legacy_config;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_multi_becomes_empty_set() {
+        let mut v = json!({ "stt_language": "multi" });
+        let mutated = migrate_legacy_config(&mut v);
+        assert!(mutated);
+        assert_eq!(v, json!({ "stt_languages": [] }));
+    }
+
+    #[test]
+    fn legacy_single_code_becomes_singleton_set() {
+        let mut v = json!({ "stt_language": "en" });
+        let mutated = migrate_legacy_config(&mut v);
+        assert!(mutated);
+        assert_eq!(v, json!({ "stt_languages": ["en"] }));
+    }
+
+    #[test]
+    fn legacy_empty_string_becomes_empty_set() {
+        let mut v = json!({ "stt_language": "" });
+        let mutated = migrate_legacy_config(&mut v);
+        assert!(mutated);
+        assert_eq!(v, json!({ "stt_languages": [] }));
+    }
+
+    #[test]
+    fn already_migrated_config_is_untouched() {
+        let mut v = json!({ "stt_languages": ["en", "de"] });
+        let snapshot = v.clone();
+        let mutated = migrate_legacy_config(&mut v);
+        assert!(!mutated);
+        assert_eq!(v, snapshot);
+    }
+
+    #[test]
+    fn both_keys_present_prefers_stt_languages_and_drops_legacy() {
+        let mut v = json!({ "stt_language": "de", "stt_languages": ["en"] });
+        let mutated = migrate_legacy_config(&mut v);
+        assert!(mutated);
+        assert_eq!(v, json!({ "stt_languages": ["en"] }));
+    }
+
+    #[test]
+    fn config_without_either_key_is_untouched() {
+        let mut v = json!({ "stt_provider": "glm-asr" });
+        let snapshot = v.clone();
+        let mutated = migrate_legacy_config(&mut v);
+        assert!(!mutated);
+        assert_eq!(v, snapshot);
+    }
+
+    #[test]
+    fn non_object_value_returns_false_without_panic() {
+        let mut v = json!("not an object");
+        let mutated = migrate_legacy_config(&mut v);
+        assert!(!mutated);
+        assert_eq!(v, json!("not an object"));
+    }
+
+    #[test]
+    fn other_fields_are_preserved_on_migration() {
+        let mut v = json!({
+            "stt_provider": "glm-asr",
+            "stt_language": "de",
+            "polish_enabled": true,
+        });
+        let mutated = migrate_legacy_config(&mut v);
+        assert!(mutated);
+        assert_eq!(
+            v,
+            json!({
+                "stt_provider": "glm-asr",
+                "stt_languages": ["de"],
+                "polish_enabled": true,
+            })
+        );
     }
 }
 

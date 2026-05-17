@@ -140,7 +140,7 @@ describe('Settings tab switching', () => {
     renderSettings()
     clickSidebarItem('settings.speechRecognition')
     expect(screen.getByText('settings.provider')).toBeDefined()
-    expect(screen.getByText('settings.sttLanguage')).toBeDefined()
+    expect(screen.getByText('settings.sttLanguages')).toBeDefined()
   })
 
   it('shows LLM provider fields after clicking AI Polish', () => {

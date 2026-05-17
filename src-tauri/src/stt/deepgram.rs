@@ -3,7 +3,73 @@ use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::{SttConfig, SttProvider, TranscriptEvent};
+use super::{DisconnectResult, SttConfig, SttProvider, TranscriptEvent};
+
+/// Pure URL builder. Deepgram's `language` parameter takes one ISO code or
+/// the `multi` sentinel; we pin only when the user has selected exactly one
+/// language, and otherwise use `multi` (which covers both empty selection and
+/// "more than one expected language").
+fn build_url(sample_rate: u32, smart_format: bool, languages: &[String]) -> String {
+    let lang = if languages.len() == 1 {
+        languages[0].as_str()
+    } else {
+        "multi"
+    };
+    format!(
+        "wss://api.deepgram.com/v1/listen?\
+         model=nova-3&\
+         smart_format={}&\
+         language={}&\
+         punctuate=true&\
+         utterances=true&\
+         interim_results=true&\
+         endpointing=150&\
+         encoding=linear16&\
+         sample_rate={}&\
+         channels=1",
+        smart_format, lang, sample_rate
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_url_uses_multi_when_languages_empty() {
+        let url = build_url(16000, true, &[]);
+        assert!(
+            url.contains("language=multi"),
+            "empty set should fall back to Deepgram's multi mode"
+        );
+    }
+
+    #[test]
+    fn build_url_pins_single_language() {
+        let url = build_url(16000, true, &["de".to_string()]);
+        assert!(url.contains("language=de"));
+        assert!(!url.contains("language=multi"));
+    }
+
+    #[test]
+    fn build_url_uses_multi_when_multiple_languages() {
+        let url = build_url(
+            16000,
+            true,
+            &["en".to_string(), "de".to_string(), "es".to_string()],
+        );
+        assert!(
+            url.contains("language=multi"),
+            "Deepgram takes one code or multi; multi covers the set"
+        );
+    }
+
+    #[test]
+    fn build_url_includes_sample_rate() {
+        let url = build_url(48000, true, &[]);
+        assert!(url.contains("sample_rate=48000"));
+    }
+}
 
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -23,29 +89,12 @@ impl DeepgramProvider {
         Self { ws: None }
     }
 
-    fn build_url(config: &SttConfig) -> String {
-        let lang = config.language.as_deref().unwrap_or("multi");
-        format!(
-            "wss://api.deepgram.com/v1/listen?\
-             model=nova-3&\
-             smart_format={}&\
-             language={}&\
-             punctuate=true&\
-             utterances=true&\
-             interim_results=true&\
-             endpointing=150&\
-             encoding=linear16&\
-             sample_rate={}&\
-             channels=1",
-            config.smart_format, lang, config.sample_rate
-        )
-    }
 }
 
 #[async_trait]
 impl SttProvider for DeepgramProvider {
     async fn connect(&mut self, config: &SttConfig) -> Result<()> {
-        let url = Self::build_url(config);
+        let url = build_url(config.sample_rate, config.smart_format, &config.languages);
         let request = http::Request::builder()
             .uri(&url)
             .header("Authorization", format!("Token {}", config.api_key))
@@ -110,9 +159,16 @@ impl SttProvider for DeepgramProvider {
                         return Ok(Some(TranscriptEvent::SpeechEnded));
                     }
 
+                    // Deepgram returns the detected language on each result
+                    // when in multi mode (and as a fixed echo when pinned).
+                    let language = v["channel"]["detected_language"]
+                        .as_str()
+                        .map(|s| s.to_string());
+
                     Ok(Some(TranscriptEvent::Final {
                         text: transcript,
                         confidence,
+                        language,
                     }))
                 } else {
                     Ok(Some(TranscriptEvent::Partial { text: transcript }))
@@ -132,7 +188,7 @@ impl SttProvider for DeepgramProvider {
         }
     }
 
-    async fn disconnect(&mut self) -> Result<Option<String>> {
+    async fn disconnect(&mut self) -> Result<DisconnectResult> {
         if let Some(ws) = &mut self.ws {
             let close_msg = serde_json::json!({"type": "CloseStream"});
             let _ = ws.send(Message::Text(close_msg.to_string())).await;

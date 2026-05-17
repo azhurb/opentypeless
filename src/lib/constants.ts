@@ -45,7 +45,6 @@ export const LLM_DEFAULT_CONFIG: Record<string, { baseUrl: string; model: string
 }
 
 export const LANGUAGES = [
-  { value: 'multi', label: 'Auto Detect' },
   { value: 'zh', label: '中文 (Chinese)' },
   { value: 'en', label: 'English' },
   { value: 'ja', label: '日本語 (Japanese)' },

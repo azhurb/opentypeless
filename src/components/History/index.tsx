@@ -122,8 +122,18 @@ export function History() {
                         <p className="text-[13px] text-text-primary leading-relaxed">
                           {entry.polished_text}
                         </p>
-                        <p className="text-[11px] text-text-tertiary mt-1">
-                          {entry.created_at.split('T')[1]?.slice(0, 5) || ''} · {entry.app_name}
+                        <p className="text-[11px] text-text-tertiary mt-1 flex items-center gap-1.5">
+                          <span>
+                            {entry.created_at.split('T')[1]?.slice(0, 5) || ''} · {entry.app_name}
+                          </span>
+                          {entry.language && (
+                            <span
+                              data-testid="history-language-badge"
+                              className="text-[10px] tracking-wide bg-bg-tertiary text-text-tertiary px-1.5 py-0.5 rounded"
+                            >
+                              {entry.language.toUpperCase()}
+                            </span>
+                          )}
                         </p>
                       </div>
                       <motion.button

@@ -48,7 +48,7 @@ export interface DictionaryEntry {
 export interface AppConfig {
   stt_provider: SttProvider
   stt_api_key: string
-  stt_language: string
+  stt_languages: string[]
   llm_provider: LlmProvider
   llm_api_key: string
   llm_model: string
@@ -175,7 +175,7 @@ const isMac =
 const defaultConfig: AppConfig = {
   stt_provider: 'glm-asr',
   stt_api_key: '',
-  stt_language: 'multi',
+  stt_languages: [],
   llm_provider: 'openrouter',
   llm_api_key: '',
   llm_model: 'google/gemini-2.5-flash',

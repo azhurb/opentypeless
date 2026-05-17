@@ -40,7 +40,17 @@ Pipeline-related events emitted by the backend:
 - `audio:volume` — input level samples for the capsule waveform.
 - `stt:partial`, `stt:final` — transcript updates.
 - `llm:chunk` — streamed polished text from the LLM.
+- `pipeline:timing` — per-dictation summary fired after output completes. Payload: `{ stt_ms, llm_ms, total_ms, recording_ms, detected_language }`. `detected_language` is the ISO-639-1 code reported by the STT for this utterance (`null` when unavailable). The frontend `useDetectedLanguageNotifier` hook uses this to fire a rate-limited toast when the detected language isn't in `config.stt_languages`.
 - `correction:suggest` — emitted to the capsule window when the post-dictation watcher finds a single-word substitution that passes the heuristic. Payload: `{ rowId, old, new, autoConfirmMs }`. The watcher runs only when `learn_from_corrections_enabled` is set in `AppConfig` and macOS Accessibility is granted.
+
+### Detected language threading
+
+When the STT reports a language (Whisper-compatible providers via `response_format=verbose_json`, Deepgram via `channel.detected_language` in multi mode), `PipelineHandle.detected_language: Arc<Mutex<Option<String>>>` captures it from either the streaming `TranscriptEvent::Final.language` or the file-based `disconnect()` tuple. The chokepoint at `stop()` reads this and passes it into:
+
+1. `PolishRequest.detected_language` — the LLM polish prompt receives a one-line context hint (rendered as a display name, never raw text from the wire).
+2. `PolishRequest.user_languages` — the polish prompt also receives the user's configured set so it can disambiguate when detection is wrong.
+3. `HistoryEntry.language` — persisted to SQLite so the History view can render a per-row badge.
+4. `pipeline:timing.detected_language` — emitted to the frontend for the wrong-language toast.
 
 This list is grep-verified from `src-tauri/src/pipeline.rs` and `src-tauri/src/lib.rs`. If an event is added or renamed, update [`frontend-backend.md`](frontend-backend.md) too.
 
