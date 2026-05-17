@@ -1,25 +1,39 @@
 import { useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../stores/appStore'
 
+const PERMISSION_ERROR_KEYS: Record<string, string> = {
+  ACCESSIBILITY_REQUIRED: 'capsule.accessibilityRequired',
+  MICROPHONE_DENIED: 'capsule.microphoneDenied',
+}
+
 export function CapsuleError() {
+  const { t } = useTranslation()
   const pipelineError = useAppStore((s) => s.pipelineError)
   const setPipelineError = useAppStore((s) => s.setPipelineError)
   const resetRecording = useAppStore((s) => s.resetRecording)
 
+  // Permission errors are actionable — keep them on screen so the user can
+  // tap the capsule to open System Settings. Transient errors still auto-clear.
+  const isPermissionError = pipelineError !== null && pipelineError in PERMISSION_ERROR_KEYS
+
   useEffect(() => {
+    if (isPermissionError) return
     const timer = setTimeout(() => {
       setPipelineError(null)
-      // Only reset recording state if the pipeline is actually idle.
-      // If the user started a new recording during the 2.5s error window,
-      // don't overwrite the active pipeline state.
       const currentState = useAppStore.getState().pipelineState
       if (currentState === 'idle') {
         resetRecording()
       }
     }, 2500)
     return () => clearTimeout(timer)
-  }, [setPipelineError, resetRecording, pipelineError])
+  }, [setPipelineError, resetRecording, pipelineError, isPermissionError])
+
+  const message =
+    pipelineError && pipelineError in PERMISSION_ERROR_KEYS
+      ? t(PERMISSION_ERROR_KEYS[pipelineError])
+      : pipelineError || 'An error occurred'
 
   return (
     <motion.div
@@ -30,9 +44,7 @@ export function CapsuleError() {
     >
       {/* White dot */}
       <motion.div className="w-2 h-2 rounded-full bg-white/80 flex-shrink-0" />
-      <p className="text-[11px] text-white truncate flex-1">
-        {pipelineError || 'An error occurred'}
-      </p>
+      <p className="text-[11px] text-white truncate flex-1">{message}</p>
     </motion.div>
   )
 }

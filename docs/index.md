@@ -24,6 +24,7 @@ Repository-local system of record for architecture, domain knowledge, decisions,
 - [Repository map](references/repo-map.md) — where important files live.
 - [Conventions](references/conventions.md) — formatting, commits, translations.
 - [Documentation maintenance](references/documentation-maintenance.md) — when and how to update docs.
+- [Troubleshooting](references/troubleshooting.md) — known macOS permission failure modes and fixes.
 
 ## Decisions And Plans
 

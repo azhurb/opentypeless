@@ -75,11 +75,36 @@ export function Capsule() {
 
       if (isRecording) {
         stopRecording()
+      } else if (hasError && pipelineError === 'MICROPHONE_DENIED') {
+        // Capsule is the user's only visible UI while dictating — make the
+        // permission-error state actionable instead of asking them to find
+        // the main window's banner.
+        import('@tauri-apps/plugin-opener')
+          .then(({ openUrl }) =>
+            openUrl('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'),
+          )
+          .catch(() => {})
+      } else if (hasError && pipelineError === 'ACCESSIBILITY_REQUIRED') {
+        import('@tauri-apps/plugin-opener')
+          .then(({ openUrl }) =>
+            openUrl(
+              'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+            ),
+          )
+          .catch(() => {})
       } else if (!isProcessing && !hasError && pipelineState === 'idle') {
         startRecording()
       }
     },
-    [isRecording, isProcessing, hasError, pipelineState, startRecording, stopRecording],
+    [
+      isRecording,
+      isProcessing,
+      hasError,
+      pipelineError,
+      pipelineState,
+      startRecording,
+      stopRecording,
+    ],
   )
 
   const handleContextMenu = (e: React.MouseEvent) => {

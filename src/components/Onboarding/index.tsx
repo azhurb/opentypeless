@@ -5,11 +5,23 @@ import { OnboardingLayout } from './OnboardingLayout'
 import { WelcomeStep } from './WelcomeStep'
 import { SttSetupStep } from './SttSetupStep'
 import { LlmSetupStep } from './LlmSetupStep'
+import { PermissionsStep } from './PermissionsStep'
 import { QuickTestStep } from './QuickTestStep'
 import { DoneStep } from './DoneStep'
 import { slideRight } from '../../lib/animations'
 
-const TOTAL_STEPS = 5
+const isMac =
+  typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
+
+// Permissions step exists only on macOS — Linux/Windows don't need the grants.
+const TOTAL_STEPS = isMac ? 6 : 5
+
+// Index map: on macOS we add Permissions between LLM and QuickTest.
+// macOS:    0 Welcome | 1 STT | 2 LLM | 3 Permissions | 4 QuickTest | 5 Done
+// non-mac:  0 Welcome | 1 STT | 2 LLM | 3 QuickTest   | 4 Done
+const STEP_PERMISSIONS = isMac ? 3 : -1
+const STEP_QUICK_TEST = isMac ? 4 : 3
+const STEP_DONE = isMac ? 5 : 4
 
 export function Onboarding() {
   const step = useAppStore((s) => s.onboardingStep)
@@ -19,41 +31,40 @@ export function Onboarding() {
   const llmTestStatus = useAppStore((s) => s.llmTestStatus)
 
   const canNext = (() => {
-    switch (step) {
-      case 0:
-        return true // Welcome — always
-      case 1:
-        return sttTestStatus === 'success' // STT must pass
-      case 2:
-        return llmTestStatus === 'success' // LLM must pass
-      case 3:
-        return true // Quick test — optional
-      case 4:
-        return true // Done
-      default:
-        return false
-    }
+    if (step === 0) return true // Welcome
+    if (step === 1) return sttTestStatus === 'success'
+    if (step === 2) return llmTestStatus === 'success'
+    if (step === STEP_PERMISSIONS) return true // optional grants
+    if (step === STEP_QUICK_TEST) return true
+    if (step === STEP_DONE) return true
+    return false
   })()
 
-  const titles = [
-    {
+  const titles: Record<number, { title: string; subtitle?: string }> = {
+    0: {
       title: 'Welcome to OpenTypeless',
       subtitle: 'A few quick steps to get started with voice input',
     },
-    {
+    1: {
       title: 'Speech Recognition',
       subtitle: 'Configure your ASR service to convert speech to text',
     },
-    {
+    2: {
       title: 'AI Polish',
       subtitle: 'Configure an LLM service to polish transcribed text',
     },
-    {
+    [STEP_QUICK_TEST]: {
       title: 'How It Works',
       subtitle: 'See the full pipeline in action — from voice to polished text',
     },
-    { title: 'Setup Complete', subtitle: undefined },
-  ]
+    [STEP_DONE]: { title: 'Setup Complete', subtitle: undefined },
+  }
+  if (STEP_PERMISSIONS >= 0) {
+    titles[STEP_PERMISSIONS] = {
+      title: 'macOS Permissions',
+      subtitle: 'Grant Microphone and Accessibility so dictation works on first try',
+    }
+  }
 
   const config = useAppStore((s) => s.config)
 
@@ -114,8 +125,9 @@ export function Onboarding() {
           {step === 0 && <WelcomeStep />}
           {step === 1 && <SttSetupStep />}
           {step === 2 && <LlmSetupStep />}
-          {step === 3 && <QuickTestStep />}
-          {step === 4 && <DoneStep />}
+          {step === STEP_PERMISSIONS && <PermissionsStep />}
+          {step === STEP_QUICK_TEST && <QuickTestStep />}
+          {step === STEP_DONE && <DoneStep />}
         </motion.div>
       </AnimatePresence>
     </OnboardingLayout>

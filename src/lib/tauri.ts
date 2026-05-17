@@ -113,6 +113,17 @@ export async function requestAccessibilityPermission(): Promise<boolean> {
   return invoke('request_accessibility_permission')
 }
 
+// macOS Microphone permission
+export type MicAuthStatus = 'not_determined' | 'restricted' | 'denied' | 'authorized'
+
+export async function checkMicrophonePermission(): Promise<MicAuthStatus> {
+  return invoke('check_microphone_permission')
+}
+
+export async function requestMicrophonePermission(): Promise<boolean> {
+  return invoke('request_microphone_permission')
+}
+
 // Onboarding persistence via tauri-plugin-store
 export async function loadOnboardingCompleted(): Promise<boolean> {
   try {

@@ -35,7 +35,7 @@ State changes emit `pipeline:state` to the frontend and update tray tooltip / ca
 Pipeline-related events emitted by the backend:
 
 - `pipeline:state` — state transitions.
-- `pipeline:error` — recoverable errors (STT/LLM/output failures, "no speech detected").
+- `pipeline:error` — recoverable errors (STT/LLM/output failures, "no speech detected"). Two emitted payloads are matched on exactly by the frontend and trigger non-default UX: `ACCESSIBILITY_REQUIRED` (paste pre-flight saw no AX grant) and `MICROPHONE_DENIED` (record pre-flight saw `denied` / `restricted` mic status). Both are emitted bare, not wrapped in `"Output failed: …"`. See [Frontend ↔ Backend → Events](frontend-backend.md#events) for the frontend handling.
 - `pipeline:target_app` — the foreground app captured for the current run.
 - `audio:volume` — input level samples for the capsule waveform.
 - `stt:partial`, `stt:final` — transcript updates.
@@ -48,9 +48,9 @@ This list is grep-verified from `src-tauri/src/pipeline.rs` and `src-tauri/src/l
 
 Text is delivered exclusively via the system clipboard plus a synthesized Cmd+V (Ctrl+V on Windows/Linux). Implementation lives in `src-tauri/src/output/`:
 
-- `clipboard.rs` snapshots the user's prior plain-text clipboard, writes the dictation text, sleeps `CLIPBOARD_SETTLE_MS` (30 ms), invokes paste via `enigo` (Cmd+V on macOS, Ctrl+V on Windows/Linux), then schedules a restore of the prior clipboard after `RESTORE_DELAY_MS` (500 ms).
+- `clipboard.rs` snapshots the user's prior plain-text clipboard, writes the dictation text, sleeps `CLIPBOARD_SETTLE_MS` (30 ms), invokes paste via `enigo` (Cmd+V on macOS, Ctrl+V on Windows/Linux), then schedules a restore of the prior clipboard after `RESTORE_DELAY_MS` (500 ms). On macOS the Cmd+V key synthesis is dispatched onto Tauri's main thread via `AppHandle::run_on_main_thread` — `enigo`'s `CGEventSource::new` internally calls `TSMGetInputSourceProperty`, which the OS aborts the process for if invoked on a Tokio worker thread (modern macOS asserts main-thread for HIToolbox). The clipboard write itself stays on the worker thread (arboard is thread-safe).
 - `chunker.rs` decides whether the paste should be split. For terminal-hosted CLIs that struggle with bulk pastes the text is broken into chunks separated by `INTER_CHUNK_DELAY_MS` (50 ms). Detection uses the foreground app's macOS bundle ID against a known terminal-like list (Terminal.app, iTerm2, Warp, Ghostty, Kitty, Alacritty, Hyper, WezTerm, VS Code, Cursor, Windsurf, JetBrains family) plus a case-insensitive substring match on the window title (`claude` → 800 chars / 2 newlines per chunk; `codex` → 1000 chars; `gemini` → 1000 chars). Non-terminal apps and shells with no recognised CLI fall through to a single bulk paste.
-- macOS Cmd+V is synthesised by `enigo` via `CGEventPost`, which requires macOS **Accessibility** permission. The correction watcher uses Accessibility too, so this is a shared grant rather than a new one. There is no path to avoid Accessibility on modern macOS for keystroke synthesis; every alternative (`osascript "tell System Events to keystroke …"`, NSEvent simulation, AXUIElement post) ultimately routes through the same TCC check.
+- macOS Cmd+V is synthesised by `enigo` via `CGEventPost`, which requires macOS **Accessibility** permission. The correction watcher uses Accessibility too, so this is a shared grant rather than a new one. There is no path to avoid Accessibility on modern macOS for keystroke synthesis; every alternative (`osascript "tell System Events to keystroke …"`, NSEvent simulation, AXUIElement post) ultimately routes through the same TCC check. `pipeline::output_text` pre-flights the grant with `is_accessibility_trusted()` and bails with `ACCESSIBILITY_REQUIRED` rather than letting the OS silently drop synthesised events when the grant is missing.
 
 ## Important Invariants
 

@@ -73,10 +73,31 @@
     "cancelProcessing": "Cancel processing",
     "cancelPolishing": "Cancel polishing",
     "errorOccurred": "An error occurred",
+    "accessibilityRequired": "Accessibility needed — tap to open Settings",
+    "microphoneDenied": "Microphone denied — tap to open Settings",
     "openMainWindow": "Open Main Window",
     "settings": "Settings",
     "history": "History",
     "exit": "Exit"
+  },
+  "permissions": {
+    "title": "Permissions",
+    "description": "OpenTypeless needs two macOS permissions to record and paste. Granting them now means dictation works on first try.",
+    "microphone": {
+      "title": "Microphone",
+      "required": "Required for dictation",
+      "denied": "Microphone denied — open Settings → Microphone",
+      "grantedHint": "Granted"
+    },
+    "accessibility": {
+      "title": "Accessibility",
+      "required": "Required to paste dictated text",
+      "grantedHint": "Granted",
+      "afterClickHint": "Toggle OpenTypeless on in System Settings → Accessibility, then come back."
+    },
+    "openSettings": "Open System Settings",
+    "grant": "Grant",
+    "skip": "Skip for now"
   },
   "settings": {
     "title": "Settings",
@@ -94,6 +115,10 @@
     "launchAtStartup": "Launch at Startup",
     "closeToTray": "Close to system tray",
     "language": "Language",
+    "accessibilityPermission": "macOS Accessibility",
+    "accessibilityGranted": "Permission granted",
+    "accessibilityRequired": "Required to paste dictated text",
+    "grantPermission": "Grant Permission",
     "provider": "Provider",
     "apiKey": "API Key",
     "enterApiKey": "Enter API Key...",

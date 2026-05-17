@@ -1,0 +1,39 @@
+# Troubleshooting
+
+Short list of failure modes that surface in user reports.
+
+## macOS: "I press the hotkey but nothing happens"
+
+### Microphone is denied or restricted
+
+OpenTypeless refuses to start the pipeline when macOS reports the Microphone authorization status as `denied` or `restricted` — letting `cpal` try to open the input device would fail silently and the macOS prompt is one-shot per install.
+
+Fix:
+
+1. System Settings → Privacy & Security → **Microphone**
+2. Toggle OpenTypeless on (or add it if it isn't listed)
+3. Re-press the hotkey
+
+The main window also shows a red **Microphone denied** banner with a one-click deeplink to the right pane.
+
+### Accessibility is granted but paste does nothing
+
+macOS keys Accessibility (TCC) grants by bundle ID *plus* code signature. When a new build with a different signing identity replaces an older OpenTypeless.app — common for self-signed local builds, ad-hoc-signed dev builds, or fork-built bundles — the entry remains in System Settings but the OS silently denies it because the signature hash doesn't match. CGEventPost then drops every synthesised key without surfacing an error.
+
+OpenTypeless detects this on the next paste attempt (`AXIsProcessTrusted()` returns false even though the entry exists) and surfaces the Accessibility banner. The user-visible symptom is "I granted permission but paste still doesn't work."
+
+Fix:
+
+1. System Settings → Privacy & Security → **Accessibility**
+2. Select OpenTypeless, click the `-` to remove it
+3. Trigger a dictation; the in-app banner re-prompts and macOS re-adds the entry
+4. Toggle the new entry on
+5. Dictate again
+
+## macOS: "I granted Microphone but it never appeared again"
+
+The macOS Microphone dialog is one-shot per install. If you dismissed or denied it, the only path forward is System Settings → Privacy & Security → Microphone. The onboarding Permissions step surfaces a deeplink button for this case.
+
+## Non-macOS
+
+The Permissions step is skipped on Linux and Windows — neither needs per-app Microphone or Accessibility grants. If recording fails, check that the default input device is selected in the OS sound settings.

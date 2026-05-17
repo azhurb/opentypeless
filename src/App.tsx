@@ -10,6 +10,8 @@ import {
   getHistory,
   getDictionary,
   checkAccessibilityPermission,
+  checkMicrophonePermission,
+  requestMicrophonePermission,
 } from './lib/tauri'
 import { Capsule } from './components/Capsule'
 import { Settings } from './components/Settings'
@@ -58,6 +60,7 @@ function MainApp() {
   const setHistory = useAppStore((s) => s.setHistory)
   const setDictionary = useAppStore((s) => s.setDictionary)
   const setAccessibilityTrusted = useAppStore((s) => s.setAccessibilityTrusted)
+  const setMicAuthStatus = useAppStore((s) => s.setMicAuthStatus)
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const { route } = useRoute()
@@ -65,32 +68,50 @@ function MainApp() {
   useEffect(() => {
     loadOnboardingCompleted().then(async (done) => {
       setOnboardingCompleted(done)
-      if (done) {
-        try {
-          const [config, history, dictionary] = await Promise.all([
-            getConfig(),
+      try {
+        // Always pull the current config so onboarding's STT / LLM steps
+        // pre-populate from any values that are already on disk. Without
+        // this the Zustand store keeps `defaultConfig` (empty keys), and
+        // re-running onboarding silently overwrites the user's real keys
+        // when the final step saves.
+        const config = await getConfig()
+        setConfig(config)
+        setSavedConfig(config)
+        if (config.ui_language && config.ui_language !== i18n.language) {
+          i18n.changeLanguage(config.ui_language)
+          localStorage.setItem('ui_language', config.ui_language)
+        }
+
+        // History and dictionary are post-onboarding views — skip them
+        // during the flow so we don't pay the I/O for nothing.
+        if (done) {
+          const [history, dictionary] = await Promise.all([
             getHistory(200, 0),
             getDictionary(),
           ])
-          setConfig(config)
-          setSavedConfig(config)
           setHistory(history)
           setDictionary(dictionary)
-          // Check macOS Accessibility permission
-          if (navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
-            checkAccessibilityPermission().then((trusted) => {
-              setAccessibilityTrusted(trusted)
-            })
-          }
-          // Restore UI language from config
-          if (config.ui_language && config.ui_language !== i18n.language) {
-            i18n.changeLanguage(config.ui_language)
-            localStorage.setItem('ui_language', config.ui_language)
-          }
-        } catch (e) {
-          console.error('Failed to load initial data:', e)
-          setLoadError(true)
         }
+
+        if (navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
+          checkAccessibilityPermission().then(setAccessibilityTrusted)
+          checkMicrophonePermission().then(async (status) => {
+            // Auto-prompt only for already-onboarded users. While the user
+            // is mid-onboarding the PermissionsStep owns the interactive
+            // grant moment; auto-firing here would race that step's
+            // Grant button and confuse the order of dialogs.
+            if (status === 'not_determined' && done) {
+              await requestMicrophonePermission()
+              const next = await checkMicrophonePermission()
+              setMicAuthStatus(next)
+            } else {
+              setMicAuthStatus(status)
+            }
+          })
+        }
+      } catch (e) {
+        console.error('Failed to load initial data:', e)
+        setLoadError(true)
       }
       setLoaded(true)
     })
@@ -101,6 +122,7 @@ function MainApp() {
     setHistory,
     setDictionary,
     setAccessibilityTrusted,
+    setMicAuthStatus,
   ])
 
   if (!loaded)

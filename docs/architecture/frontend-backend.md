@@ -13,7 +13,7 @@ Rust commands are registered in the `tauri::generate_handler![...]` block at the
 Current command groups (grep-verified against `generate_handler!`):
 
 - Pipeline: `start_recording`, `stop_recording`, `abort_recording`.
-- Permissions: `check_accessibility_permission`, `request_accessibility_permission`.
+- Permissions: `check_accessibility_permission`, `request_accessibility_permission`, `check_microphone_permission`, `request_microphone_permission`. The two microphone commands are macOS-only in effect — on other platforms they short-circuit to `authorized` / `true`. Implementation goes through `src-tauri/src/audio/permission.rs`, which links a small ObjC shim (`src-tauri/src/audio/mic_permission.m`, compiled by `build.rs`) wrapping `AVCaptureDevice.authorizationStatus` and `requestAccess`.
 - Config: `get_config`, `update_config`.
 - Provider checks: `test_stt_connection`, `test_llm_connection`, `bench_stt_connection`, `bench_llm_connection`.
 - LLM metadata: `fetch_llm_models`.
@@ -32,9 +32,17 @@ Rust emits events with `app_handle.emit(...)` / `window.emit(...)`. The frontend
 Event names emitted by the backend:
 
 - Pipeline: `pipeline:state`, `pipeline:error`, `pipeline:target_app`.
+- Permissions: `permissions:mic_status` — emitted by Rust when the pipeline refuses to start because Microphone is denied; payload is the `MicAuthStatus` snake-case string (`not_determined` | `restricted` | `denied` | `authorized`). The frontend writes it straight into the Zustand store.
 - Audio/STT/LLM streams: `audio:volume`, `stt:partial`, `stt:final`, `llm:chunk`.
 - Corrections: `correction:suggest` (emitted to the capsule window only).
 - Tray: `tray:settings`, `tray:history`, `tray:about`.
+
+`pipeline:error` is also used to surface permission-gate failures as machine-readable codes the frontend matches on exactly:
+
+- `ACCESSIBILITY_REQUIRED` — pre-flight check in `pipeline::output_text` saw `AXIsProcessTrusted() == false`. Frontend flips `accessibilityTrusted` to `false`, surfaces the AccessibilityBanner, and `CapsuleError` renders a localized, sticky message.
+- `MICROPHONE_DENIED` — pre-flight check in `pipeline::start` saw a `denied` / `restricted` mic status, refused to invoke cpal, and bailed before the recording state transition. Frontend flips `micAuthStatus` to `denied` and surfaces the MicDeniedBanner.
+
+These codes are emitted bare, not wrapped in `"Output failed: …"`; see `output_error_message` in `src-tauri/src/pipeline.rs` for the helper that keeps the contract intact across the three pipeline emit sites.
 
 Event payload contracts are not centrally documented yet; reading the emit sites is the source of truth.
 
