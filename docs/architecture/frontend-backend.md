@@ -34,7 +34,8 @@ Event names emitted by the backend:
 - Pipeline: `pipeline:state`, `pipeline:error`, `pipeline:target_app`.
 - Permissions: `permissions:mic_status` — emitted by Rust when the pipeline refuses to start because Microphone is denied; payload is the `MicAuthStatus` snake-case string (`not_determined` | `restricted` | `denied` | `authorized`). The frontend writes it straight into the Zustand store.
 - Audio/STT/LLM streams: `audio:volume`, `stt:partial`, `stt:final`, `llm:chunk`.
-- Corrections: `correction:suggest` (emitted to the capsule window only).
+- Corrections: `correction:suggest` (emitted to the capsule window only). `dictionary:changed` (emitted by `correction_undo` so any window that cares re-fetches via `get_dictionary`).
+- Config: `config:changed` — emitted by `update_config` after persisting; payload is the full `AppConfig`. Every webview's `useTauriEvents` listens and `setConfig`s its local Zustand copy. Without this fan-out the capsule window keeps the stale config it loaded at mount, so settings like `capsule_auto_hide` would not take effect until the next launch.
 - Tray: `tray:settings`, `tray:history`, `tray:about`.
 
 `pipeline:error` is also used to surface permission-gate failures as machine-readable codes the frontend matches on exactly:

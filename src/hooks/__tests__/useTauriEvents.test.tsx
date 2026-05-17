@@ -127,3 +127,37 @@ describe('useTauriEvents — permissions:mic_status event', () => {
     expect(useAppStore.getState().micAuthStatus).toBe('authorized')
   })
 })
+
+describe('useTauriEvents — config:changed event', () => {
+  // Each Tauri window owns its own webview and its own Zustand instance, so the
+  // capsule window can't see config edits saved from the main Settings pane
+  // without a cross-window notification. Rust emits `config:changed` after
+  // persisting; this listener is what keeps the capsule's `capsule_auto_hide`
+  // (and other config-derived UI like the duration timer) in sync without an
+  // app restart.
+
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('replaces the store config with the event payload', async () => {
+    renderHook(() => useTauriEvents())
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Sanity: default has auto_hide off.
+    expect(useAppStore.getState().config.capsule_auto_hide).toBe(false)
+
+    const updated = {
+      ...useAppStore.getState().config,
+      capsule_auto_hide: true,
+      max_recording_seconds: 90,
+    }
+    await fire('config:changed', updated)
+
+    expect(useAppStore.getState().config.capsule_auto_hide).toBe(true)
+    expect(useAppStore.getState().config.max_recording_seconds).toBe(90)
+    expect(useAppStore.getState().configLoaded).toBe(true)
+  })
+})

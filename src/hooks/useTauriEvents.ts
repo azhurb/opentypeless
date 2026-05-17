@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '../stores/appStore'
-import type { PipelineState } from '../stores/appStore'
+import type { AppConfig, PipelineState } from '../stores/appStore'
 import { getHistory, getDictionary, type MicAuthStatus } from '../lib/tauri'
 
 export function useTauriEvents() {
@@ -13,6 +13,7 @@ export function useTauriEvents() {
     setPipelineState,
     setTargetApp,
     setPipelineError,
+    setConfig,
     setHistory,
     setDictionary,
     setCorrectionSuggestion,
@@ -108,6 +109,14 @@ export function useTauriEvents() {
         })
     })
 
+    // Rust broadcasts the full AppConfig after every persisted update so
+    // every webview (main Settings pane, capsule) can replace its local
+    // Zustand copy. The capsule is the load-bearing consumer — its
+    // show/hide is derived from `config.capsule_auto_hide`, so without
+    // this dispatch the "Hide capsule when idle" toggle wouldn't take
+    // effect until the next app launch.
+    addListener<AppConfig>('config:changed', setConfig)
+
     return () => {
       cancelled = true
       unlisteners.forEach((unlisten) => unlisten())
@@ -120,6 +129,7 @@ export function useTauriEvents() {
     setPipelineState,
     setTargetApp,
     setPipelineError,
+    setConfig,
     setHistory,
     setDictionary,
     setCorrectionSuggestion,
