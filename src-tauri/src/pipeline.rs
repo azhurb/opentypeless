@@ -107,6 +107,19 @@ pub fn request_accessibility_permission() -> bool {
     }
 }
 
+/// Frontend-recognised error code that means "macOS Accessibility permission
+/// was not granted, so paste was skipped." The frontend uses it to flip a
+/// store flag and surface a banner; kept bare (not wrapped in "Output failed:
+/// …") so the comparison stays exact.
+const ACCESSIBILITY_REQUIRED_CODE: &str = "ACCESSIBILITY_REQUIRED";
+
+fn output_error_message(e: &anyhow::Error) -> String {
+    if e.to_string() == ACCESSIBILITY_REQUIRED_CODE {
+        return ACCESSIBILITY_REQUIRED_CODE.to_string();
+    }
+    format!("Output failed: {e}")
+}
+
 /// Delay before capturing selected text to ensure hotkey modifiers are released.
 const SELECTED_TEXT_CAPTURE_DELAY_MS: u64 = 60;
 /// Delay after simulating Ctrl+C to let the clipboard update.
@@ -305,6 +318,26 @@ impl PipelineHandle {
     }
 
     pub async fn start(&self) -> Result<()> {
+        // Hard-gate: macOS Microphone permission must be Authorized before
+        // we touch cpal. If we let cpal try, the OS device-open fails with a
+        // generic error and the user has no path back to the prompt (it's
+        // one-shot per install). Surface MICROPHONE_DENIED so the frontend
+        // can show the banner pointing to System Settings.
+        #[cfg(target_os = "macos")]
+        {
+            let status = crate::audio::check_microphone_permission();
+            if matches!(
+                status,
+                crate::audio::MicAuthStatus::Denied | crate::audio::MicAuthStatus::Restricted
+            ) {
+                let _ = self.app_handle.emit("pipeline:error", "MICROPHONE_DENIED");
+                let _ = self
+                    .app_handle
+                    .emit("permissions:mic_status", &status);
+                anyhow::bail!("MICROPHONE_DENIED");
+            }
+        }
+
         // Hold pipeline_lock for the entire setup so stop() cannot read
         // partially-initialised state (preloaded_config, audio_handle, etc.).
         let _guard = self.pipeline_lock.lock().await;
@@ -801,7 +834,7 @@ impl PipelineHandle {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
                             .app_handle
-                            .emit("pipeline:error", format!("Output failed: {e}"));
+                            .emit("pipeline:error", output_error_message(&e));
                     }
                 }
                 Err(e) => {
@@ -821,7 +854,7 @@ impl PipelineHandle {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
                             .app_handle
-                            .emit("pipeline:error", format!("Output failed: {e}"));
+                            .emit("pipeline:error", output_error_message(&e));
                     }
                 }
             }
@@ -847,7 +880,7 @@ impl PipelineHandle {
                 tracing::error!("Output failed: {}", e);
                 let _ = self
                     .app_handle
-                    .emit("pipeline:error", format!("Output failed: {e}"));
+                    .emit("pipeline:error", output_error_message(&e));
             }
         }
 
@@ -954,12 +987,21 @@ impl PipelineHandle {
     ) -> Result<()> {
         self.set_state(PipelineState::Outputting);
 
+        // Paste relies on CGEventPost (via enigo); without Accessibility the
+        // OS silently drops every synthesised key and enigo returns Ok, so
+        // we must gate up front rather than detect after the fact.
+        #[cfg(target_os = "macos")]
+        if !is_accessibility_trusted() {
+            let _ = request_accessibility_permission();
+            anyhow::bail!("ACCESSIBILITY_REQUIRED");
+        }
+
         // Trailing single space so successive dictations don't glue together
         // ("hello world" + "goodbye" → "hello world. goodbye." instead of
         // "hello world.goodbye."). History stores the un-normalized text.
         let typed = with_trailing_space(text);
 
-        output::paste_text(&typed, app_ctx).await?;
+        output::paste_text(&self.app_handle, &typed, app_ctx).await?;
 
         let _ = self.app_handle.emit("pipeline:target_app", &app_ctx.app_name);
 
@@ -1013,7 +1055,7 @@ impl PipelineHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::with_trailing_space;
+    use super::{output_error_message, with_trailing_space, ACCESSIBILITY_REQUIRED_CODE};
 
     #[test]
     fn appends_single_space_to_normal_text() {
@@ -1044,5 +1086,29 @@ mod tests {
     fn handles_multibyte_terminal_punctuation() {
         // Japanese full-width period — must not panic and must append a single ASCII space.
         assert_eq!(with_trailing_space("こんにちは。"), "こんにちは。 ");
+    }
+
+    #[test]
+    fn output_error_passes_accessibility_code_bare() {
+        // Frontend matches on the exact string ACCESSIBILITY_REQUIRED. If we
+        // wrapped it ("Output failed: ACCESSIBILITY_REQUIRED") the capsule's
+        // permission-error branch would never fire and users would see the
+        // raw token instead of the localized message.
+        let err = anyhow::anyhow!(ACCESSIBILITY_REQUIRED_CODE);
+        assert_eq!(output_error_message(&err), ACCESSIBILITY_REQUIRED_CODE);
+    }
+
+    #[test]
+    fn output_error_wraps_other_errors() {
+        let err = anyhow::anyhow!("Connection refused");
+        assert_eq!(output_error_message(&err), "Output failed: Connection refused");
+    }
+
+    #[test]
+    fn output_error_wraps_substring_matches() {
+        // Only the exact code is special-cased — a message that merely
+        // contains the token shouldn't be treated as a permission error.
+        let err = anyhow::anyhow!("ACCESSIBILITY_REQUIRED somewhere in the middle");
+        assert!(output_error_message(&err).starts_with("Output failed:"));
     }
 }

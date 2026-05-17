@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '../stores/appStore'
 import type { PipelineState } from '../stores/appStore'
-import { getHistory, getDictionary } from '../lib/tauri'
+import { getHistory, getDictionary, type MicAuthStatus } from '../lib/tauri'
 
 export function useTauriEvents() {
   const {
@@ -16,6 +16,8 @@ export function useTauriEvents() {
     setHistory,
     setDictionary,
     setCorrectionSuggestion,
+    setAccessibilityTrusted,
+    setMicAuthStatus,
   } = useAppStore()
 
   useEffect(() => {
@@ -60,7 +62,18 @@ export function useTauriEvents() {
     addListener<string>('pipeline:target_app', setTargetApp)
     addListener<string>('pipeline:error', (error) => {
       setPipelineError(error)
+      if (error === 'ACCESSIBILITY_REQUIRED') {
+        // Paste was skipped because AX wasn't granted. Flip the store flag so
+        // the banner / settings UI reflect reality without waiting for the
+        // next focus-recheck.
+        setAccessibilityTrusted(false)
+      }
+      if (error === 'MICROPHONE_DENIED') {
+        // Pipeline refused to start because Mic is denied/restricted.
+        setMicAuthStatus('denied')
+      }
     })
+    addListener<MicAuthStatus>('permissions:mic_status', setMicAuthStatus)
 
     addListener<void>('tray:settings', () => {
       window.location.hash = '#/settings'
@@ -110,5 +123,7 @@ export function useTauriEvents() {
     setHistory,
     setDictionary,
     setCorrectionSuggestion,
+    setAccessibilityTrusted,
+    setMicAuthStatus,
   ])
 }

@@ -153,4 +153,44 @@ describe('appStore', () => {
       expect(getState().onboardingCompleted).toBe(true)
     })
   })
+
+  describe('macOS permissions state', () => {
+    it('accessibilityTrusted defaults to true', () => {
+      // Default `true` so non-macOS users never see the banner without an
+      // explicit check flipping it false.
+      expect(getState().accessibilityTrusted).toBe(true)
+    })
+
+    it('setAccessibilityTrusted flips the flag', () => {
+      getState().setAccessibilityTrusted(false)
+      expect(getState().accessibilityTrusted).toBe(false)
+      getState().setAccessibilityTrusted(true)
+      expect(getState().accessibilityTrusted).toBe(true)
+    })
+
+    it('micAuthStatus defaults to authorized', () => {
+      // Same reasoning as accessibilityTrusted: non-macOS users have no
+      // per-app mic gate, so default to authorized.
+      expect(getState().micAuthStatus).toBe('authorized')
+    })
+
+    it('setMicAuthStatus accepts all four AVAuthorizationStatus values', () => {
+      const values = ['not_determined', 'restricted', 'denied', 'authorized'] as const
+      for (const v of values) {
+        getState().setMicAuthStatus(v)
+        expect(getState().micAuthStatus).toBe(v)
+      }
+    })
+
+    it('AX and Mic permission state are independent', () => {
+      getState().setAccessibilityTrusted(false)
+      getState().setMicAuthStatus('denied')
+      expect(getState().accessibilityTrusted).toBe(false)
+      expect(getState().micAuthStatus).toBe('denied')
+
+      getState().setAccessibilityTrusted(true)
+      // Mic state unchanged after AX flip
+      expect(getState().micAuthStatus).toBe('denied')
+    })
+  })
 })

@@ -149,6 +149,11 @@ interface AppState {
   accessibilityTrusted: boolean
   setAccessibilityTrusted: (trusted: boolean) => void
 
+  // macOS Microphone permission — `authorized` by default so non-macOS users
+  // bypass the banner without an extra round-trip.
+  micAuthStatus: 'not_determined' | 'restricted' | 'denied' | 'authorized'
+  setMicAuthStatus: (status: 'not_determined' | 'restricted' | 'denied' | 'authorized') => void
+
   // Context menu
   contextMenuOpen: boolean
   setContextMenuOpen: (open: boolean) => void
@@ -248,6 +253,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   accessibilityTrusted: true,
   setAccessibilityTrusted: (accessibilityTrusted) => set({ accessibilityTrusted }),
+
+  micAuthStatus: 'authorized',
+  setMicAuthStatus: (micAuthStatus) => set({ micAuthStatus }),
 
   contextMenuOpen: false,
   setContextMenuOpen: (contextMenuOpen) => set({ contextMenuOpen }),

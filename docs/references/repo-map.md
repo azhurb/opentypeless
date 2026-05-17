@@ -28,7 +28,7 @@ Where important files live. For module responsibilities see [Architecture overvi
 - `src-tauri/src/lib.rs` - Tauri setup, commands, tray, hotkey handling, app bootstrap.
 - `src-tauri/src/main.rs` - app entrypoint.
 - `src-tauri/src/pipeline.rs` - recording, STT, LLM, output orchestration.
-- `src-tauri/src/audio/` - microphone capture.
+- `src-tauri/src/audio/` - microphone capture (`capture.rs`) and macOS permission FFI (`permission.rs` + ObjC shim `mic_permission.m`, compiled by `build.rs`).
 - `src-tauri/src/stt/` - STT provider abstraction and implementations.
 - `src-tauri/src/llm/` - LLM abstraction, providers, prompt builder.
 - `src-tauri/src/output/` - keyboard and clipboard output implementations.

@@ -138,6 +138,21 @@ Off by default. When enabled (Settings → Dictionary → "Learn from correction
 
 Auto-learned rows in Settings → Dictionary show a subtle Sparkles icon next to the word; hovering surfaces the STT-produced word the user replaced. See [Storage → Dictionary](../architecture/storage.md#dictionary-dictionarystore) for the underlying `source`/`observed_source` columns.
 
+## macOS Permissions UX
+
+User-facing promise: the app surfaces the macOS permissions it needs (Microphone, Accessibility) up front during onboarding, and recovers gracefully when a grant is missing or has been revoked.
+
+Repo evidence:
+
+- Onboarding inserts a `PermissionsStep` on macOS between the LLM and How-It-Works steps (six steps on macOS, five elsewhere) — `src/components/Onboarding/index.tsx` and `src/components/Onboarding/PermissionsStep.tsx`. The step shows current Microphone and Accessibility status and routes the Grant buttons to either `requestMicrophonePermission` / `requestAccessibilityPermission` (when not yet asked) or directly to System Settings (when already denied — the macOS dialog is one-shot per install).
+- `src/App.tsx` runs both `checkMicrophonePermission` and `checkAccessibilityPermission` at startup on macOS, and auto-prompts microphone when the status is `not_determined` *and* onboarding has already been completed (so an existing user who upgrades to a build with the upfront prompt still sees the dialog at launch instead of mid-dictation). During onboarding the auto-prompt is suppressed — the `PermissionsStep`'s Grant button owns that moment.
+- Main-window banners — `src/components/MainLayout/AccessibilityBanner.tsx` and `src/components/MainLayout/MicDeniedBanner.tsx` — appear on macOS whenever the corresponding store flag turns negative. Each banner has a Grant / Open Settings action and a dismiss button.
+- The capsule itself becomes actionable on permission errors: `src/components/Capsule/CapsuleError.tsx` renders localized, sticky messages for `ACCESSIBILITY_REQUIRED` and `MICROPHONE_DENIED` (no 2.5 s auto-clear, unlike transient errors), and `src/components/Capsule/index.tsx` swaps the capsule click handler from "start recording" to "open the relevant System Settings pane" while a permission error is active.
+- The pipeline refuses to start when Microphone is `denied` / `restricted` (`pipeline.rs::start`); paste similarly refuses when Accessibility is missing (`pipeline.rs::output_text`). Both emit machine-readable error codes — see [Pipeline → Events](../architecture/pipeline.md#events) and [Frontend ↔ Backend → Events](../architecture/frontend-backend.md#events).
+- Window-show predicate at launch lives in `src-tauri/src/lib.rs::should_show_window_on_launch` and surfaces the main window whenever the user is still in onboarding (no STT key yet or `onboarding_completed` missing / false), so a flag drop or a partial-config state always lands the user on a visible flow rather than a tray-only launch.
+
+Troubleshooting flows for the signature-mismatch and one-shot-dialog cases live in [`docs/references/troubleshooting.md`](../references/troubleshooting.md).
+
 ## Privacy And Local-First BYOK
 
 User-facing promise: API keys stay local and provider requests go directly to the selected provider. There are no OpenTypeless servers in the loop.

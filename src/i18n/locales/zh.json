@@ -73,10 +73,31 @@
     "cancelProcessing": "取消处理",
     "cancelPolishing": "取消润色",
     "errorOccurred": "发生错误",
+    "accessibilityRequired": "需要辅助功能权限 — 点击打开设置",
+    "microphoneDenied": "麦克风已被拒绝 — 点击打开设置",
     "openMainWindow": "打开主窗口",
     "settings": "设置",
     "history": "历史记录",
     "exit": "退出"
+  },
+  "permissions": {
+    "title": "权限",
+    "description": "OpenTypeless 需要两项 macOS 权限以进行录音与粘贴。现在授予后，首次听写即可正常工作。",
+    "microphone": {
+      "title": "麦克风",
+      "required": "听写所必需",
+      "denied": "麦克风已被拒绝 — 请打开设置 → 麦克风",
+      "grantedHint": "已授予"
+    },
+    "accessibility": {
+      "title": "辅助功能",
+      "required": "粘贴听写文本所必需",
+      "grantedHint": "已授予",
+      "afterClickHint": "请在系统设置 → 辅助功能中开启 OpenTypeless，然后返回。"
+    },
+    "openSettings": "打开系统设置",
+    "grant": "授权",
+    "skip": "暂时跳过"
   },
   "settings": {
     "title": "设置",
@@ -94,6 +115,10 @@
     "launchAtStartup": "开机启动",
     "closeToTray": "关闭到系统托盘",
     "language": "语言",
+    "accessibilityPermission": "macOS 辅助功能",
+    "accessibilityGranted": "权限已授予",
+    "accessibilityRequired": "粘贴听写文本所必需",
+    "grantPermission": "授权",
     "provider": "服务商",
     "apiKey": "API 密钥",
     "enterApiKey": "输入 API 密钥...",

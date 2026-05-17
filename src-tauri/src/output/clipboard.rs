@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use tauri::AppHandle;
 
 use crate::app_detector::AppContext;
 use super::chunker::{plan_chunks, ChunkPlan};
@@ -20,13 +21,14 @@ const INTER_CHUNK_DELAY_MS: u64 = 50;
 /// pasted text within this window or restoration will overwrite it.
 const RESTORE_DELAY_MS: u64 = 500;
 
-pub async fn paste(text: &str, app: &AppContext) -> Result<()> {
+pub async fn paste(app_handle: &AppHandle, text: &str, app: &AppContext) -> Result<()> {
     let text = text.to_string();
     let app = app.clone();
-    tokio::task::spawn_blocking(move || paste_blocking(text, &app)).await?
+    let app_handle = app_handle.clone();
+    tokio::task::spawn_blocking(move || paste_blocking(app_handle, text, &app)).await?
 }
 
-fn paste_blocking(text: String, app: &AppContext) -> Result<()> {
+fn paste_blocking(app_handle: AppHandle, text: String, app: &AppContext) -> Result<()> {
     let mut clipboard = arboard::Clipboard::new()
         .map_err(|e| anyhow::anyhow!("Failed to access clipboard: {}", e))?;
 
@@ -38,12 +40,12 @@ fn paste_blocking(text: String, app: &AppContext) -> Result<()> {
 
     match plan_chunks(text, app) {
         ChunkPlan::Single(t) => {
-            write_and_paste(&mut clipboard, &t)?;
+            write_and_paste(&mut clipboard, &t, &app_handle)?;
         }
         ChunkPlan::Multi(chunks) => {
             let last = chunks.len().saturating_sub(1);
             for (i, chunk) in chunks.iter().enumerate() {
-                write_and_paste(&mut clipboard, chunk)?;
+                write_and_paste(&mut clipboard, chunk, &app_handle)?;
                 if i != last {
                     std::thread::sleep(Duration::from_millis(INTER_CHUNK_DELAY_MS));
                 }
@@ -61,19 +63,47 @@ fn paste_blocking(text: String, app: &AppContext) -> Result<()> {
     Ok(())
 }
 
-fn write_and_paste(clipboard: &mut arboard::Clipboard, text: &str) -> Result<()> {
+fn write_and_paste(
+    clipboard: &mut arboard::Clipboard,
+    text: &str,
+    app_handle: &AppHandle,
+) -> Result<()> {
     clipboard
         .set_text(text)
         .map_err(|e| anyhow::anyhow!("Failed to set clipboard: {}", e))?;
     std::thread::sleep(Duration::from_millis(CLIPBOARD_SETTLE_MS));
-    invoke_paste()
+    invoke_paste(app_handle)
 }
 
-fn invoke_paste() -> Result<()> {
-    // Send Cmd+V (macOS) or Ctrl+V (Windows/Linux) directly via CGEventPost
-    // (or the platform equivalent) — no osascript / System Events round
-    // trip. On macOS this requires Accessibility but not Automation,
-    // halving the permission surface the user must grant.
+fn invoke_paste(app_handle: &AppHandle) -> Result<()> {
+    // macOS: enigo's CGEventSource construction internally calls
+    // TSMGetInputSourceProperty, which on macOS Sequoia / Tahoe asserts
+    // main-thread and SIGTRAPs the process. Marshal the keystroke synth
+    // onto Tauri's main thread (the same approach the reference product
+    // takes by running paste in its main-threaded helper binary).
+    //
+    // The clipboard write itself stays on the worker thread — arboard /
+    // NSPasteboard is thread-safe and a sync dispatch for that part would
+    // serialise pastes behind the UI runloop unnecessarily.
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Result<()>>(1);
+        app_handle
+            .run_on_main_thread(move || {
+                let _ = tx.send(synthesize_paste_keystroke());
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to dispatch paste to main thread: {e}"))?;
+        rx.recv()
+            .map_err(|_| anyhow::anyhow!("Main-thread paste closure dropped before sending"))?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app_handle;
+        synthesize_paste_keystroke()
+    }
+}
+
+fn synthesize_paste_keystroke() -> Result<()> {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     let mut enigo = Enigo::new(&Settings::default())
         .map_err(|e| anyhow::anyhow!("Failed to create Enigo: {:?}", e))?;

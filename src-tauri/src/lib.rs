@@ -131,6 +131,16 @@ fn request_accessibility_permission() -> bool {
 }
 
 #[tauri::command]
+fn check_microphone_permission() -> audio::MicAuthStatus {
+    audio::check_microphone_permission()
+}
+
+#[tauri::command]
+async fn request_microphone_permission() -> bool {
+    audio::request_microphone_permission().await
+}
+
+#[tauri::command]
 async fn get_config(
     state: tauri::State<'_, storage::ConfigManager>,
 ) -> Result<storage::AppConfig, String> {
@@ -877,9 +887,53 @@ fn parse_hotkey(s: &str) -> Option<Shortcut> {
     Some(Shortcut::new(mods, code))
 }
 
+/// Decide whether to surface the main window on app startup.
+///
+/// OpenTypeless lives in the system tray, so the main window stays hidden
+/// most of the time. The exception is when the user is still in onboarding —
+/// either because the STT API key is unset (a fresh install) or because the
+/// `onboarding_completed` flag is missing / false (a re-test or a flag drop).
+/// Without surfacing the window in that case, onboarding renders into an
+/// invisible web view and the user has no path to it.
+fn should_show_window_on_launch(stt_key_empty: bool, onboarding_completed: bool) -> bool {
+    stt_key_empty || !onboarding_completed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── should_show_window_on_launch ─────────────────────────────────────
+    // Truth table for the predicate that decides whether to surface the main
+    // window at startup. The "key set + onboarding incomplete" row guards
+    // the regression where dropping `onboarding_completed` for a re-test
+    // left the user staring at the tray with no visible window.
+
+    #[test]
+    fn show_window_on_first_run_no_key_no_onboarding() {
+        assert!(should_show_window_on_launch(true, false));
+    }
+
+    #[test]
+    fn show_window_when_key_present_but_onboarding_incomplete() {
+        // The regression. Previously the predicate was just
+        // `stt_key_empty`, so this returned false and onboarding rendered
+        // into a hidden window.
+        assert!(should_show_window_on_launch(false, false));
+    }
+
+    #[test]
+    fn show_window_when_key_missing_even_if_onboarding_marked_done() {
+        // Edge case: onboarding flag stuck true but the user wiped the key
+        // somehow. Surface the window so they can re-enter the key.
+        assert!(should_show_window_on_launch(true, true));
+    }
+
+    #[test]
+    fn keep_window_hidden_on_normal_launch() {
+        // Configured + onboarded: tray-only launch.
+        assert!(!should_show_window_on_launch(false, true));
+    }
 
     #[test]
     fn test_parse_hotkey_ctrl_slash() {
@@ -1230,10 +1284,21 @@ pub fn run() {
             }
 
             // OpenTypeless lives in the tray, so launches stay hidden by default.
-            // Exception: first run (no STT API key configured yet) — surface the
-            // settings window so onboarding is reachable without hunting for the
-            // tray icon.
-            if initial_config.stt_api_key.is_empty() {
+            // We surface the window when the user is still in onboarding —
+            // either no STT key yet, or `onboarding_completed` missing / false.
+            // Predicate lives in `should_show_window_on_launch` so the decision
+            // is unit-tested independently of the Tauri runtime.
+            let onboarding_completed = app
+                .handle()
+                .store("settings.json")
+                .ok()
+                .and_then(|s| s.get("onboarding_completed"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if should_show_window_on_launch(
+                initial_config.stt_api_key.is_empty(),
+                onboarding_completed,
+            ) {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
@@ -1280,6 +1345,8 @@ pub fn run() {
             abort_recording,
             check_accessibility_permission,
             request_accessibility_permission,
+            check_microphone_permission,
+            request_microphone_permission,
             get_config,
             update_config,
             test_stt_connection,
