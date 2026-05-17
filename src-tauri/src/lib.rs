@@ -149,6 +149,7 @@ async fn get_config(
 
 #[tauri::command]
 async fn update_config(
+    app: tauri::AppHandle,
     state: tauri::State<'_, storage::ConfigManager>,
     cache: tauri::State<'_, HotkeyModeCache>,
     close_tray_cache: tauri::State<'_, CloseToTrayCache>,
@@ -156,7 +157,16 @@ async fn update_config(
 ) -> Result<(), String> {
     *cache.0.lock().unwrap_or_else(|e| e.into_inner()) = config.hotkey_mode.clone();
     *close_tray_cache.0.lock().unwrap_or_else(|e| e.into_inner()) = config.close_to_tray;
-    state.save(&config).await.map_err(|e| e.to_string())
+    state.save(&config).await.map_err(|e| e.to_string())?;
+    // Broadcast to every webview (main + capsule) so each window's Zustand
+    // can replace its local config copy without an app restart. The capsule
+    // is the load-bearing case — its show/hide is derived from
+    // `capsule_auto_hide`, and without this event the toggle in Settings
+    // wouldn't take effect until next launch.
+    if let Err(e) = app.emit("config:changed", &config) {
+        tracing::warn!("failed to emit config:changed: {}", e);
+    }
+    Ok(())
 }
 
 #[tauri::command]
