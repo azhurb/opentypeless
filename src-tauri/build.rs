@@ -1,10 +1,14 @@
 fn main() {
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os == "macos" {
-        // Microphone permission needs AVCaptureDevice — an ObjC API with a
-        // block-based completion handler. Doing that through raw objc_msgSend
-        // is painful; a small ObjC shim exposes plain-C entry points the Rust
-        // side can call exactly like the AX FFI in pipeline.rs.
+    // Microphone permission needs AVCaptureDevice — an ObjC API with a
+    // block-based completion handler. Doing that through raw objc_msgSend
+    // is painful; a small ObjC shim exposes plain-C entry points the Rust
+    // side can call exactly like the AX FFI in pipeline.rs.
+    //
+    // The `cfg` gate (rather than a runtime `target_os` check) is required:
+    // `cc` is declared as a build-dep only for macOS, so the path must not
+    // be resolvable on other targets at compile time.
+    #[cfg(target_os = "macos")]
+    {
         cc::Build::new()
             .file("src/audio/mic_permission.m")
             .flag("-fobjc-arc")
