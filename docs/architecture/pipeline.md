@@ -14,11 +14,14 @@ State changes emit `pipeline:state` to the frontend and update tray tooltip / ca
 
 1. `pipeline_lock` serializes setup so a fast press-release in hold mode cannot let `stop()` observe partially initialized state.
 2. State moves `Idle → Recording`.
-3. Config, current foreground-app context, and dictionary are loaded.
-4. STT API config is built. An empty API key aborts the pipeline before audio capture starts.
-5. STT provider connects before audio capture starts.
-6. Audio capture starts and streams chunks to STT.
-7. Partial and final transcript events are emitted to the frontend.
+3. Audio capture opens first, before any of the slow async setup. The cpal stream feeds an mpsc channel bounded at ~4 s of headroom (200 chunks of 20 ms), so samples buffer locally while the rest of setup runs — collapsing the dead window between hotkey press and first-captured audio.
+4. Config, current foreground-app context, and dictionary are loaded.
+5. STT API config is built. An empty API key aborts the pipeline, tearing down the running audio capture via `cleanup_failed_start()`.
+6. STT provider connects. For streaming providers (Deepgram, AssemblyAI) this is a full WebSocket handshake — audio keeps buffering during the handshake.
+7. The STT forwarder task spawns, immediately flushing any pre-buffered chunks into the now-connected provider.
+8. Partial and final transcript events are emitted to the frontend.
+
+Background: audio capture used to be the *last* step of setup. With streaming STT the WebSocket handshake (~100–500 ms) plus foreground-app detection plus cpal cold-start meant the first ~300–1200 ms of user speech was discarded. See [`docs/plans/active/dictation-startup-latency.md`](../plans/active/dictation-startup-latency.md) for the full timing breakdown, the macOS native-detection rewrite that lives alongside this change, and the deferred follow-ups.
 
 ## Stop Flow
 

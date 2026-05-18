@@ -10,6 +10,9 @@ This repository is a fork of [Tover0314/opentypeless](https://github.com/tover03
 
 ## [Unreleased]
 
+### Fixed
+- First-few-words clipping at dictation start, especially noticeable on short utterances and worse under variable system load. `PipelineHandle::start()` used to run config load, foreground-app detection (three sequential `osascript "tell application System Events"` shell-outs, ~150–450 ms cold), STT WebSocket connect (~100–500 ms for streaming providers), and `cpal` stream open (~50–300 ms) *before* any audio sample was captured — so the first ~300 ms–1.2 s of speech after key-down was discarded. Two changes close the gap: `AudioCaptureHandle::start()` now opens the cpal stream first, and the audio mpsc channel (200 chunks × 20 ms ≈ 4 s) absorbs samples while the slow setup runs in the background; once STT connects, the forwarder task flushes the pre-buffer. macOS foreground-app detection is rewritten to use `NSWorkspace.frontmostApplication` (via the Objective-C runtime) plus an AX `AXFocusedWindow → AXTitle` read, replacing the three osascript spawns with a single in-process call (<5 ms). `recording_start` now stamps when capture really begins so the `pipeline:timing.recording_ms` metric stops under-reporting by the dead-window amount. See [`docs/plans/active/dictation-startup-latency.md`](docs/plans/active/dictation-startup-latency.md) for the timing breakdown and deferred follow-ups.
+
 ## [0.3.1] - 2026-05-18
 
 ### Fixed
