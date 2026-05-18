@@ -75,52 +75,155 @@ fn write_and_paste(
     invoke_paste(app_handle)
 }
 
-fn invoke_paste(app_handle: &AppHandle) -> Result<()> {
-    // macOS: enigo's CGEventSource construction internally calls
-    // TSMGetInputSourceProperty, which on macOS Sequoia / Tahoe asserts
-    // main-thread and SIGTRAPs the process. Marshal the keystroke synth
-    // onto Tauri's main thread (the same approach the reference product
-    // takes by running paste in its main-threaded helper binary).
-    //
-    // The clipboard write itself stays on the worker thread — arboard /
-    // NSPasteboard is thread-safe and a sync dispatch for that part would
-    // serialise pastes behind the UI runloop unnecessarily.
-    #[cfg(target_os = "macos")]
-    {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Result<()>>(1);
-        app_handle
-            .run_on_main_thread(move || {
-                let _ = tx.send(synthesize_paste_keystroke());
-            })
-            .map_err(|e| anyhow::anyhow!("Failed to dispatch paste to main thread: {e}"))?;
-        rx.recv()
-            .map_err(|_| anyhow::anyhow!("Main-thread paste closure dropped before sending"))?
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = app_handle;
-        synthesize_paste_keystroke()
-    }
-}
-
-fn synthesize_paste_keystroke() -> Result<()> {
+#[cfg(not(target_os = "macos"))]
+fn invoke_paste(_app_handle: &AppHandle) -> Result<()> {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     let mut enigo = Enigo::new(&Settings::default())
         .map_err(|e| anyhow::anyhow!("Failed to create Enigo: {:?}", e))?;
-
-    #[cfg(target_os = "macos")]
-    let modifier = Key::Meta;
-    #[cfg(not(target_os = "macos"))]
-    let modifier = Key::Control;
-
     enigo
-        .key(modifier, Direction::Press)
-        .map_err(|e| anyhow::anyhow!("Key press error: {:?}", e))?;
+        .key(Key::Control, Direction::Press)
+        .map_err(|e| anyhow::anyhow!("Ctrl press error: {:?}", e))?;
     enigo
         .key(Key::Unicode('v'), Direction::Click)
-        .map_err(|e| anyhow::anyhow!("Key click error: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("V click error: {:?}", e))?;
     enigo
-        .key(modifier, Direction::Release)
-        .map_err(|e| anyhow::anyhow!("Key release error: {:?}", e))?;
+        .key(Key::Control, Direction::Release)
+        .map_err(|e| anyhow::anyhow!("Ctrl release error: {:?}", e))?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn invoke_paste(app_handle: &AppHandle) -> Result<()> {
+    // CGEvent APIs are documented thread-safe, but post-paste we sometimes
+    // run alongside other main-thread-touching paths (tray, capsule
+    // updates). Marshalling onto Tauri's main thread serialises with those
+    // and matches the reference helper's per-paste dispatch_sync pattern.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<()>>(1);
+    app_handle
+        .run_on_main_thread(move || {
+            let _ = tx.send(post_paste_keystroke());
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to dispatch paste to main thread: {e}"))?;
+    rx.recv()
+        .map_err(|_| anyhow::anyhow!("Main-thread paste closure dropped before sending"))?
+}
+
+/// macOS paste keystroke synthesis.
+///
+/// Builds two CGEvents (V key-down, V key-up) directly via core-graphics,
+/// sets `kCGEventFlagMaskCommand` on each event, and posts them to the
+/// HID event tap with a 5 ms gap. This mirrors the canonical CGEvent
+/// pattern used by macOS keystroke-synthesising helpers and avoids the
+/// race that `enigo` 0.2.x exhibits: enigo posts a separate Cmd
+/// `flagsChanged` event and relies on the OS to inherit the modifier
+/// state from `CombinedSessionState` by the time the V event is created
+/// — under load this inheritance is intermittent and the V event ships
+/// without the Cmd flag, so the receiving app types a literal "v"
+/// instead of pasting. Setting the flag directly on the V event makes
+/// the keystroke modifier-deterministic.
+///
+/// Uses `HIDSystemState` for the event source so flags derive from
+/// hardware state alone, isolating synthesis from any in-flight
+/// synthesised modifier state on `CombinedSessionState`.
+#[cfg(target_os = "macos")]
+fn post_paste_keystroke() -> Result<()> {
+    use core_graphics::event::CGEventTapLocation;
+
+    let (down, up) = build_paste_events()?;
+    down.post(CGEventTapLocation::HID);
+    // 5 ms between the down and up posts: the receiving app's key-down
+    // handler must run before the up arrives, or some apps (terminals
+    // especially) drop the shortcut. The reference helper uses the same
+    // 5 ms gap (`usleep(0x1388)`).
+    std::thread::sleep(Duration::from_millis(5));
+    up.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+/// Build the V key-down and V key-up CGEvents for a Cmd+V paste.
+///
+/// Factored out of [`post_paste_keystroke`] so unit tests can inspect
+/// the resulting events' keycode and flags without posting them.
+#[cfg(target_os = "macos")]
+fn build_paste_events() -> Result<(core_graphics::event::CGEvent, core_graphics::event::CGEvent)> {
+    use core_graphics::event::{CGEvent, CGEventFlags};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    // kVK_ANSI_V — the layout-independent keycode for the "V" key.
+    const KVK_ANSI_V: core_graphics::event::CGKeyCode = 0x09;
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource"))?;
+
+    let down = CGEvent::new_keyboard_event(source.clone(), KVK_ANSI_V, true)
+        .map_err(|_| anyhow::anyhow!("Failed to create V key-down event"))?;
+    down.set_flags(CGEventFlags::CGEventFlagCommand);
+
+    let up = CGEvent::new_keyboard_event(source, KVK_ANSI_V, false)
+        .map_err(|_| anyhow::anyhow!("Failed to create V key-up event"))?;
+    up.set_flags(CGEventFlags::CGEventFlagCommand);
+
+    Ok((down, up))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use core_graphics::event::{CGEventFlags, EventField};
+
+    /// kVK_ANSI_V — the layout-independent keycode for the V key on macOS.
+    const KVK_ANSI_V: i64 = 0x09;
+
+    #[test]
+    fn paste_events_use_v_keycode() {
+        let (down, up) = build_paste_events().expect("CGEvents construct");
+        assert_eq!(
+            down.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
+            KVK_ANSI_V,
+            "key-down event must carry kVK_ANSI_V"
+        );
+        assert_eq!(
+            up.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
+            KVK_ANSI_V,
+            "key-up event must carry kVK_ANSI_V"
+        );
+    }
+
+    #[test]
+    fn paste_events_set_command_flag_on_both_down_and_up() {
+        // The whole point of this rewrite: the Cmd flag must be stamped
+        // directly on both the down and the up event. If either event
+        // ships without it, modern macOS racily routes the keystroke as a
+        // literal "v" character instead of paste.
+        let (down, up) = build_paste_events().expect("CGEvents construct");
+        assert!(
+            down.get_flags().contains(CGEventFlags::CGEventFlagCommand),
+            "key-down must have Cmd flag set"
+        );
+        assert!(
+            up.get_flags().contains(CGEventFlags::CGEventFlagCommand),
+            "key-up must have Cmd flag set"
+        );
+    }
+
+    #[test]
+    fn paste_events_do_not_leak_other_modifiers() {
+        // Defence against future edits accidentally OR-ing in Shift/Ctrl
+        // /Alt — that would turn paste into a different shortcut.
+        let (down, up) = build_paste_events().expect("CGEvents construct");
+        let other_modifiers = CGEventFlags::CGEventFlagShift
+            | CGEventFlags::CGEventFlagControl
+            | CGEventFlags::CGEventFlagAlternate
+            | CGEventFlags::CGEventFlagSecondaryFn;
+        assert!(
+            !down.get_flags().intersects(other_modifiers),
+            "key-down has stray modifier: flags={:?}",
+            down.get_flags()
+        );
+        assert!(
+            !up.get_flags().intersects(other_modifiers),
+            "key-up has stray modifier: flags={:?}",
+            up.get_flags()
+        );
+    }
 }
