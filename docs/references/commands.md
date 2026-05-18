@@ -65,16 +65,23 @@ Releases are tag-driven. `.github/workflows/release.yml` triggers on tags matchi
 ### Cutting a release
 
 1. Pick the next version above the highest existing `vX.Y.Z` tag (`git tag --sort=-version:refname | head -1`).
-2. Tag the commit you want to ship and push the tag:
+2. **Fold the changelog before tagging.** Open a small PR that renames the `[Unreleased]` section in `CHANGELOG.md` to `[X.Y.Z] - YYYY-MM-DD` and merge it. Without this step, `git checkout vX.Y.Z` shows the release's changes under `[Unreleased]` even though they have shipped — the tag points at a commit where the file disagrees with reality.
+3. Tag the fold's merge commit on `main` and push the tag:
 
    ```bash
-   git tag v0.1.25 <commit>
+   git tag v0.1.25 <merge-commit-sha>
    git push origin v0.1.25
    ```
 
-3. The `Release` workflow runs four parallel builds: Windows (`x86_64-pc-windows-msvc`), macOS arm64 (`aarch64-apple-darwin`), macOS x86_64 (`x86_64-apple-darwin`), Linux (`x86_64-unknown-linux-gnu`).
-4. CI strips the leading `v` and writes the version into `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` *during the build only* — these files stay at `0.1.0` in git. **Do not commit version bumps.**
-5. `tauri-apps/tauri-action@v0` uploads the artifacts to a **draft** GitHub Release. Smoke-test, then publish manually from the Releases page.
+4. **If the release workflow doesn't trigger automatically** (tag-push triggers can stall on this fork), kick it manually:
+
+   ```bash
+   gh workflow run release.yml --field tag=v0.1.25
+   ```
+
+5. The `Release` workflow runs four parallel builds: Windows (`x86_64-pc-windows-msvc`), macOS arm64 (`aarch64-apple-darwin`), macOS x86_64 (`x86_64-apple-darwin`), Linux (`x86_64-unknown-linux-gnu`).
+6. CI strips the leading `v` and writes the version into `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` *during the build only* — these files stay at `0.1.0` in git. **Do not commit version bumps.**
+7. `tauri-apps/tauri-action@v0` uploads the artifacts to a **draft** GitHub Release with a stub body. Replace the body with proper release notes (sections from the `CHANGELOG.md` entry plus a Downloads section that includes the macOS Gatekeeper `xattr -dr com.apple.quarantine` workaround — the build is signed but not notarized, so Sequoia / Tahoe block first launch). Use a prior release as a style reference. Smoke-test the artifacts, then publish from the Releases page (default to non-prerelease for visibility).
 
 ### Re-running a build for an existing tag
 
