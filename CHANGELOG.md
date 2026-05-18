@@ -10,6 +10,8 @@ This repository is a fork of [Tover0314/opentypeless](https://github.com/tover03
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-18
+
 ### Fixed
 - Intermittent "only V typed instead of paste" bug on macOS, especially in browser text inputs and other Chromium/Electron surfaces. macOS Cmd+V is now synthesised by building the V key-down and key-up CGEvents directly via `core-graphics` and stamping `kCGEventFlagMaskCommand` on each event with `CGEventSetFlags`, rather than going through `enigo` 0.2.x which posted a separate Cmd `flagsChanged` event and relied on `CombinedSessionState` to propagate the modifier onto the V event. Under load that propagation raced the V event's creation and the receiving app saw a plain V keystroke, typing a literal "v" instead of pasting. Windows/Linux still use `enigo` Ctrl+V; the race was macOS-specific.
 
