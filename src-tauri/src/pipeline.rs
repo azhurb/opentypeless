@@ -324,6 +324,40 @@ impl PipelineHandle {
             .unwrap_or_default()
     }
 
+    /// Tear down a partially-initialised recording: stop any running audio
+    /// capture, clear preloaded slots and timing, transition back to Idle.
+    /// Safe to call regardless of how far `start()` got — the audio-handle
+    /// slot is `None` until capture succeeds, and the preloaded slots are
+    /// `None` until they're populated, so each clear is a no-op when nothing
+    /// was set.
+    fn cleanup_failed_start(&self) {
+        {
+            let mut handle = self.audio_handle.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(ref mut h) = *handle {
+                h.stop();
+            }
+            *handle = None;
+        }
+        *self.audio_volume.lock().unwrap_or_else(|e| e.into_inner()) = 0.0;
+        *self
+            .recording_start
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        *self
+            .preloaded_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        *self
+            .preloaded_app_ctx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        *self
+            .preloaded_dictionary
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        self.set_state(PipelineState::Idle);
+    }
+
     pub async fn start(&self) -> Result<()> {
         // Hard-gate: macOS Microphone permission must be Authorized before
         // we touch cpal. If we let cpal try, the OS device-open fails with a
@@ -395,127 +429,37 @@ impl PipelineHandle {
             .detected_language
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
-
-        // P0-2: Load config BEFORE starting audio capture — fail fast on missing API key
-        let config_data = self.load_config().await;
+        // Selected text is captured in stop() after the hotkey is released
+        // (so Ctrl+C simulation won't conflict with held keys). Clear the
+        // slot here so a fresh recording can't observe a leftover value.
         *self
-            .preloaded_config
+            .preloaded_selected_text
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(config_data.clone());
-        *self
-            .preloaded_app_ctx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(app_detector::detect_current_app());
-        let dict_words = self
-            .app_handle
-            .state::<std::sync::Arc<storage::DictionaryStore>>()
-            .words()
-            .await;
-        *self
-            .preloaded_dictionary
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(dict_words);
+            .unwrap_or_else(|e| e.into_inner()) = None;
 
-        tracing::debug!(
-            "Pipeline using config: stt_provider={}, stt_key_len={}, stt_langs={:?}",
-            config_data.stt_provider,
-            config_data.stt_api_key.len(),
-            config_data.stt_languages
-        );
-
-        // Guard: empty API key — bail before starting audio
-        if config_data.stt_api_key.is_empty() {
-            let _ = self.app_handle.emit(
-                "pipeline:error",
-                "STT API key is not configured. Please set it in Settings → Speech Recognition.",
-            );
-            *self
-                .preloaded_config
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_app_ctx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_dictionary
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            self.set_state(PipelineState::Idle);
-            return Ok(());
-        }
-
-        // P0-3: Pre-connect STT provider before spawning task
-        let stt_config = SttConfig {
-            api_key: config_data.stt_api_key.clone(),
-            languages: config_data.stt_languages.clone(),
-            smart_format: true,
-            sample_rate: 16000,
-        };
-
-        let mut provider =
-            stt::create_provider(&config_data.stt_provider, Some(self.shared_client.clone()));
-        if let Err(e) = provider.connect(&stt_config).await {
-            tracing::error!("STT connect failed: {}", e);
-            let _ = self
-                .app_handle
-                .emit("pipeline:error", format!("STT connection failed: {e}"));
-            *self
-                .preloaded_config
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_app_ctx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_dictionary
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            self.set_state(PipelineState::Idle);
-            return Ok(());
-        }
-
-        // Start audio capture on dedicated thread
+        // Open the audio capture FIRST, before the slow async setup (config
+        // load, foreground-app detection, dictionary fetch, STT connect).
+        // The audio mpsc channel in audio/capture.rs is bounded at 200 chunks
+        // of ~20 ms each (~4 s of headroom), so the cpal callback can buffer
+        // samples while the rest of setup runs — closing the dead-window
+        // gap that previously dropped the first few hundred ms of speech.
         let config = AudioConfig::default();
         let (handle, mut audio_rx) = match AudioCaptureHandle::start(config) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Audio capture failed: {}", e);
-                let _ = self.app_handle.emit(
-                    "pipeline:error",
-                    format!("Audio capture failed: {e}"),
-                );
-                *self
-                    .preloaded_config
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = None;
-                *self
-                    .preloaded_app_ctx
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = None;
-                *self
-                    .preloaded_dictionary
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = None;
-                self.set_state(PipelineState::Idle);
+                let _ = self
+                    .app_handle
+                    .emit("pipeline:error", format!("Audio capture failed: {e}"));
+                self.cleanup_failed_start();
                 return Ok(());
             }
         };
-
-        // Store the audio handle's volume reference.
-        // Check abort_flag first — if abort() was called while we were connecting
-        // to STT, don't store the handle (it would be orphaned with nobody to stop it).
-        if self.abort_flag.load(Ordering::SeqCst) {
-            tracing::info!("Pipeline aborted during setup, discarding audio capture");
-            // handle drops here, stopping the capture thread
-            self.set_state(PipelineState::Idle);
-            return Ok(());
-        }
         let audio_vol = handle.get_volume();
         *self.audio_volume.lock().unwrap_or_else(|e| e.into_inner()) = audio_vol;
         *self.audio_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
-
+        // Stamp recording_start now so the `recording_ms` metric measures
+        // real capture duration rather than post-connect duration.
         *self
             .recording_start
             .lock()
@@ -542,14 +486,78 @@ impl PipelineHandle {
             }
         });
 
-        // Selected text will be captured in stop() after hotkey is released,
-        // so Ctrl+C simulation won't conflict with held keys.
+        // Now do the slow setup. Audio is already buffering into audio_rx.
+        let config_data = self.load_config().await;
         *self
-            .preloaded_selected_text
+            .preloaded_config
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
+            .unwrap_or_else(|e| e.into_inner()) = Some(config_data.clone());
+        *self
+            .preloaded_app_ctx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(app_detector::detect_current_app());
+        let dict_words = self
+            .app_handle
+            .state::<std::sync::Arc<storage::DictionaryStore>>()
+            .words()
+            .await;
+        *self
+            .preloaded_dictionary
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(dict_words);
 
-        // STT streaming task — provider is already connected
+        tracing::debug!(
+            "Pipeline using config: stt_provider={}, stt_key_len={}, stt_langs={:?}",
+            config_data.stt_provider,
+            config_data.stt_api_key.len(),
+            config_data.stt_languages
+        );
+
+        // Guard: empty API key — bail and tear down the running capture
+        if config_data.stt_api_key.is_empty() {
+            let _ = self.app_handle.emit(
+                "pipeline:error",
+                "STT API key is not configured. Please set it in Settings → Speech Recognition.",
+            );
+            self.cleanup_failed_start();
+            return Ok(());
+        }
+
+        // Pre-connect STT provider. For streaming providers (Deepgram /
+        // AssemblyAI) this is a full WebSocket handshake; audio is buffering
+        // into audio_rx the whole time, so the dead window the user used to
+        // see has now been folded into a pre-buffer.
+        let stt_config = SttConfig {
+            api_key: config_data.stt_api_key.clone(),
+            languages: config_data.stt_languages.clone(),
+            smart_format: true,
+            sample_rate: 16000,
+        };
+
+        let mut provider =
+            stt::create_provider(&config_data.stt_provider, Some(self.shared_client.clone()));
+        if let Err(e) = provider.connect(&stt_config).await {
+            tracing::error!("STT connect failed: {}", e);
+            let _ = self
+                .app_handle
+                .emit("pipeline:error", format!("STT connection failed: {e}"));
+            self.cleanup_failed_start();
+            return Ok(());
+        }
+
+        // Check abort_flag — if abort() was called during the connect (or
+        // any earlier async setup step), drop the connected provider and
+        // tear down the running capture.
+        if self.abort_flag.load(Ordering::SeqCst) {
+            tracing::info!("Pipeline aborted during setup, discarding audio capture and STT");
+            drop(provider);
+            self.cleanup_failed_start();
+            return Ok(());
+        }
+
+        // STT streaming task — provider is already connected, audio_rx may
+        // already hold a few hundred ms of pre-buffered samples that the
+        // forwarder will flush immediately.
         let app_handle = self.app_handle.clone();
         let accumulated = self.accumulated_text.clone();
         let detected_lang = self.detected_language.clone();
