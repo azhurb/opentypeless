@@ -31,8 +31,9 @@ fn with_trailing_space(text: &str) -> String {
 }
 
 /// On macOS, verify whether the process has been granted Accessibility (Assistive Access)
-/// permission. enigo uses CGEventPost under the hood, which requires this permission;
-/// without it all synthesised key events are silently dropped by the OS.
+/// permission. The paste path posts CGEvents directly and the selected-text capture goes
+/// through enigo's CGEventPost; both require this permission, and without it the OS silently
+/// drops every synthesised key event.
 /// Returns true on all non-macOS platforms (no permission needed).
 pub fn is_accessibility_trusted() -> bool {
     #[cfg(target_os = "macos")]
@@ -1012,9 +1013,9 @@ impl PipelineHandle {
     ) -> Result<()> {
         self.set_state(PipelineState::Outputting);
 
-        // Paste relies on CGEventPost (via enigo); without Accessibility the
-        // OS silently drops every synthesised key and enigo returns Ok, so
-        // we must gate up front rather than detect after the fact.
+        // Paste relies on CGEventPost; without Accessibility the OS silently
+        // drops every synthesised key and CGEventPost returns void, so we must
+        // gate up front rather than detect after the fact.
         #[cfg(target_os = "macos")]
         if !is_accessibility_trusted() {
             let _ = request_accessibility_permission();
