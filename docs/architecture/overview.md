@@ -29,7 +29,7 @@ Detail: [Pipeline](pipeline.md). Provider abstractions: [Providers](providers.md
 | `src-tauri/src/output/` | Clipboard-based text output with per-target chunking. |
 | `src-tauri/src/storage/` | Config (`tauri-plugin-store`) and SQLite stores. |
 | `src-tauri/src/audio/` | Microphone capture (`cpal`). |
-| `src-tauri/src/app_detector/` | Foreground app detection / classification. |
+| `src-tauri/src/app_detector/` | Foreground app detection / classification; coding-CLI process detection for paste chunking (`cli_detect.rs`). |
 
 ## Windows
 

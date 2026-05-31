@@ -3,6 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use tauri::AppHandle;
 
+use crate::app_detector::cli_detect;
 use crate::app_detector::AppContext;
 use super::chunker::{plan_chunks, ChunkPlan};
 
@@ -38,7 +39,11 @@ fn paste_blocking(app_handle: AppHandle, text: String, app: &AppContext) -> Resu
     // preserved. Acceptable for v1.
     let previous = clipboard.get_text().ok();
 
-    match plan_chunks(text, app) {
+    // Detect a coding CLI running inside the focused app (by process tree),
+    // which drives chunking even when the window title doesn't name the CLI.
+    let detected = app.pid.and_then(cli_detect::detect_foreground_cli);
+
+    match plan_chunks(text, app, detected) {
         ChunkPlan::Single(t) => {
             write_and_paste(&mut clipboard, &t, &app_handle)?;
         }

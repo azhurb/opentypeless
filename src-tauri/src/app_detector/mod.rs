@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::llm::AppType;
 
+pub mod cli_detect;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppContext {
     pub app_name: String,
@@ -13,6 +15,11 @@ pub struct AppContext {
     /// recognize terminal emulators and IDE terminal panels.
     #[serde(default)]
     pub bundle_id: Option<String>,
+    /// Process id of the foreground application. `None` when it can't be
+    /// resolved. Used by the paste chunker to find a coding CLI running inside
+    /// the focused terminal/IDE (see [`cli_detect`]).
+    #[serde(default)]
+    pub pid: Option<i32>,
 }
 
 impl Default for AppContext {
@@ -22,6 +29,7 @@ impl Default for AppContext {
             window_title: String::new(),
             app_type: AppType::General,
             bundle_id: None,
+            pid: None,
         }
     }
 }
@@ -61,6 +69,7 @@ fn macos_detect() -> AppContext {
         window_title,
         app_type,
         bundle_id,
+        pid: if pid > 0 { Some(pid) } else { None },
     }
 }
 
@@ -284,6 +293,7 @@ fn windows_detect() -> AppContext {
             window_title,
             app_type,
             bundle_id: None,
+            pid: if pid > 0 { Some(pid as i32) } else { None },
         }
     }
 }
