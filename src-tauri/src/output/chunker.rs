@@ -1,3 +1,4 @@
+use crate::app_detector::cli_detect::{CliKind, Confidence, DetectedCli};
 use crate::app_detector::AppContext;
 
 /// How a single paste should be delivered to the foreground app.
@@ -17,9 +18,10 @@ enum ChunkLimit {
     CharsAndNewlines { max_chars: usize, max_newlines: usize },
 }
 
-/// Decide how to split `text` based on the focused app.
-pub fn plan_chunks(text: String, app: &AppContext) -> ChunkPlan {
-    let chunks = match chunk_limit_for(app) {
+/// Decide how to split `text` based on the focused app and any coding CLI
+/// detected running inside it.
+pub fn plan_chunks(text: String, app: &AppContext, detected: Option<DetectedCli>) -> ChunkPlan {
+    let chunks = match chunk_limit_for(app, detected) {
         ChunkLimit::None => return ChunkPlan::Single(text),
         ChunkLimit::Chars(max) => chunk_by_chars(&text, max, None),
         ChunkLimit::CharsAndNewlines { max_chars, max_newlines } => {
@@ -33,15 +35,29 @@ pub fn plan_chunks(text: String, app: &AppContext) -> ChunkPlan {
     }
 }
 
-/// Decide the per-target chunking strategy.
+/// Decide the per-target chunking strategy. Constants per CLI are empirical:
+/// Claude prefers small chunks with few newlines per chunk; Codex tolerates
+/// larger chunks with no newline limit; Gemini is treated like Codex pending
+/// confirmation.
 ///
-/// Terminal-hosted CLIs are detected by matching the foreground app's
-/// bundle ID against a known list of terminal emulators and editor
-/// terminal panels, then matching the window title against a CLI name.
-/// Constants per CLI are empirical: Claude prefers small chunks with
-/// few newlines per chunk; Codex tolerates larger chunks with no
-/// newline limit; Gemini is treated like Codex pending confirmation.
-fn chunk_limit_for(app: &AppContext) -> ChunkLimit {
+/// Two ways to recognize a terminal-hosted CLI:
+///
+/// - **By running process (`detected`)**: a coding CLI found running inside the
+///   focused app's process tree, with high confidence. This is host-
+///   independent — it works even when the window title doesn't name the CLI
+///   (e.g. an IDE's integrated terminal, which reports the project name).
+/// - **By window title (fallback)**: the foreground app's bundle ID is a known
+///   terminal/IDE and its window title contains the CLI name. Used when process
+///   detection is unavailable or only low-confidence.
+fn chunk_limit_for(app: &AppContext, detected: Option<DetectedCli>) -> ChunkLimit {
+    if let Some(DetectedCli {
+        kind,
+        confidence: Confidence::High,
+    }) = detected
+    {
+        return cli_chunk_limit(kind);
+    }
+
     let bundle_id = match app.bundle_id.as_deref() {
         Some(id) => id,
         None => return ChunkLimit::None,
@@ -51,15 +67,24 @@ fn chunk_limit_for(app: &AppContext) -> ChunkLimit {
     }
     let title_lc = app.window_title.to_lowercase();
     if title_lc.contains("claude") {
-        return ChunkLimit::CharsAndNewlines { max_chars: 800, max_newlines: 2 };
+        return cli_chunk_limit(CliKind::Claude);
     }
     if title_lc.contains("codex") {
-        return ChunkLimit::Chars(1000);
+        return cli_chunk_limit(CliKind::Codex);
     }
     if title_lc.contains("gemini") {
-        return ChunkLimit::Chars(1000);
+        return cli_chunk_limit(CliKind::Gemini);
     }
     ChunkLimit::None
+}
+
+/// Empirical chunk limits per CLI. Claude collapses/mangles pastes at ≥3
+/// newlines or >800 chars; Codex and Gemini tolerate up to ~1000 chars.
+fn cli_chunk_limit(kind: CliKind) -> ChunkLimit {
+    match kind {
+        CliKind::Claude => ChunkLimit::CharsAndNewlines { max_chars: 800, max_newlines: 2 },
+        CliKind::Codex | CliKind::Gemini => ChunkLimit::Chars(1000),
+    }
 }
 
 /// Bundle IDs we treat as "terminal-like" for the purpose of CLI detection.
@@ -87,12 +112,18 @@ fn is_terminal_like(bundle_id: &str) -> bool {
         | "com.jetbrains.intellij.ce"
         | "com.jetbrains.pycharm"
         | "com.jetbrains.pycharm.ce"
+        | "com.jetbrains.PhpStorm"
         | "com.jetbrains.WebStorm"
         | "com.jetbrains.webstorm"
         | "com.jetbrains.rubymine"
         | "com.jetbrains.datagrip"
         | "com.jetbrains.goland"
         | "com.jetbrains.rider"
+        | "com.jetbrains.CLion"
+        | "com.jetbrains.clion"
+        | "com.jetbrains.rustrover"
+        | "com.jetbrains.RustRover"
+        | "com.google.android.studio"
     )
 }
 
@@ -168,7 +199,15 @@ mod tests {
             window_title: window_title.to_string(),
             app_type: AppType::General,
             bundle_id: bundle_id.map(|s| s.to_string()),
+            pid: None,
         }
+    }
+
+    fn high(kind: CliKind) -> Option<DetectedCli> {
+        Some(DetectedCli {
+            kind,
+            confidence: Confidence::High,
+        })
     }
 
     #[test]
@@ -231,7 +270,7 @@ mod tests {
     #[test]
     fn no_chunking_when_bundle_id_absent() {
         let app = app_with(None, "Codex");
-        match plan_chunks("hello".repeat(500), &app) {
+        match plan_chunks("hello".repeat(500), &app, None) {
             ChunkPlan::Single(_) => {}
             ChunkPlan::Multi(_) => panic!("expected Single when bundle_id is None"),
         }
@@ -240,7 +279,7 @@ mod tests {
     #[test]
     fn no_chunking_for_non_terminal_app() {
         let app = app_with(Some("com.apple.Notes"), "Codex");
-        match plan_chunks("a".repeat(2000), &app) {
+        match plan_chunks("a".repeat(2000), &app, None) {
             ChunkPlan::Single(_) => {}
             ChunkPlan::Multi(_) => panic!("Notes should not chunk"),
         }
@@ -249,7 +288,7 @@ mod tests {
     #[test]
     fn no_chunking_for_terminal_without_known_cli() {
         let app = app_with(Some("com.googlecode.iterm2"), "user@host: ~");
-        match plan_chunks("a".repeat(2000), &app) {
+        match plan_chunks("a".repeat(2000), &app, None) {
             ChunkPlan::Single(_) => {}
             ChunkPlan::Multi(_) => panic!("plain shell session should not chunk"),
         }
@@ -258,7 +297,7 @@ mod tests {
     #[test]
     fn chunks_for_codex_in_iterm2() {
         let app = app_with(Some("com.googlecode.iterm2"), "codex — main");
-        match plan_chunks("a".repeat(2500), &app) {
+        match plan_chunks("a".repeat(2500), &app, None) {
             ChunkPlan::Multi(chunks) => {
                 assert!(chunks.len() >= 3, "expected ≥3 chunks for 2500-char paste");
                 for c in &chunks {
@@ -275,7 +314,7 @@ mod tests {
             Some("com.jetbrains.intellij"),
             "Claude — opentypeless [~/projects/opentypeless]",
         );
-        match plan_chunks("line\n".repeat(300), &app) {
+        match plan_chunks("line\n".repeat(300), &app, None) {
             ChunkPlan::Multi(chunks) => {
                 for c in &chunks {
                     assert!(c.chars().count() <= 800);
@@ -289,7 +328,7 @@ mod tests {
     #[test]
     fn cli_match_is_case_insensitive() {
         let app = app_with(Some("com.googlecode.iterm2"), "CODEX — main");
-        match plan_chunks("a".repeat(1500), &app) {
+        match plan_chunks("a".repeat(1500), &app, None) {
             ChunkPlan::Multi(_) => {}
             ChunkPlan::Single(_) => panic!("title match must be case-insensitive"),
         }
@@ -298,9 +337,69 @@ mod tests {
     #[test]
     fn short_text_stays_single_even_for_known_cli() {
         let app = app_with(Some("com.googlecode.iterm2"), "codex");
-        match plan_chunks("hi".to_string(), &app) {
+        match plan_chunks("hi".to_string(), &app, None) {
             ChunkPlan::Single(s) => assert_eq!(s, "hi"),
             ChunkPlan::Multi(_) => panic!("short text should not chunk"),
+        }
+    }
+
+    // The regression case: a JetBrains IDE (PhpStorm) whose bundle id isn't in
+    // the terminal allowlist and whose window title doesn't name the CLI. The
+    // title-based arm can't fire, so only high-confidence process detection
+    // (arm A) keeps the long paste from being delivered as one bulk Cmd+V.
+    #[test]
+    fn high_confidence_claude_chunks_even_when_title_and_bundle_miss() {
+        let app = app_with(Some("com.jetbrains.PhpStorm"), "");
+        match plan_chunks("line\n".repeat(300), &app, high(CliKind::Claude)) {
+            ChunkPlan::Multi(chunks) => {
+                for c in &chunks {
+                    assert!(c.chars().count() <= 800);
+                    assert!(c.matches('\n').count() <= 2);
+                }
+            }
+            ChunkPlan::Single(_) => {
+                panic!("high-confidence Claude detection must chunk regardless of title/bundle")
+            }
+        }
+    }
+
+    #[test]
+    fn high_confidence_codex_uses_codex_limits() {
+        let app = app_with(Some("com.jetbrains.PhpStorm"), "");
+        match plan_chunks("a".repeat(2500), &app, high(CliKind::Codex)) {
+            ChunkPlan::Multi(chunks) => {
+                for c in &chunks {
+                    assert!(c.chars().count() <= 1000);
+                }
+            }
+            ChunkPlan::Single(_) => panic!("expected Multi for high-confidence Codex"),
+        }
+    }
+
+    // Low confidence (a CLI running, but not under the focused app) must NOT
+    // trigger arm A — we fall back to the title heuristic, which here can't
+    // match, so the paste stays a single event.
+    #[test]
+    fn low_confidence_does_not_trigger_arm_a() {
+        let app = app_with(Some("com.jetbrains.PhpStorm"), "");
+        let low = Some(DetectedCli {
+            kind: CliKind::Claude,
+            confidence: Confidence::Low,
+        });
+        match plan_chunks("line\n".repeat(300), &app, low) {
+            ChunkPlan::Single(_) => {}
+            ChunkPlan::Multi(_) => panic!("low confidence must not chunk via arm A"),
+        }
+    }
+
+    // Arm A wins over arm B: even in a recognized terminal, high-confidence
+    // detection should set the strategy without needing a title match.
+    #[test]
+    fn arm_a_fires_in_plain_terminal_without_title_match() {
+        let app = app_with(Some("com.googlecode.iterm2"), "user@host: ~");
+        match plan_chunks("line\n".repeat(300), &app, high(CliKind::Claude)) {
+            ChunkPlan::Multi(_) => {}
+            ChunkPlan::Single(_) => panic!("arm A should fire even without a title match"),
         }
     }
 }
