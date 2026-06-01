@@ -75,6 +75,7 @@
     "errorOccurred": "An error occurred",
     "accessibilityRequired": "Accessibility needed — tap to open Settings",
     "microphoneDenied": "Microphone denied — tap to open Settings",
+    "clipboardTip": "Copied — press {{shortcut}} to paste",
     "openMainWindow": "Open Main Window",
     "settings": "Settings",
     "history": "History",

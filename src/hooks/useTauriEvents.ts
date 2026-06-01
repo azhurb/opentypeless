@@ -19,6 +19,7 @@ export function useTauriEvents() {
     setCorrectionSuggestion,
     setAccessibilityTrusted,
     setMicAuthStatus,
+    setClipboardTip,
   } = useAppStore()
 
   useEffect(() => {
@@ -48,6 +49,8 @@ export function useTauriEvents() {
       if (state === 'recording') {
         // Clear any previous error when starting a new pipeline run
         setPipelineError(null)
+        // Dismiss a lingering clipboard tip — the user is dictating again.
+        setClipboardTip(false)
       }
       if (state === 'idle') {
         // Don't clear pipelineError here — CapsuleError auto-resets after 2.5s.
@@ -75,6 +78,19 @@ export function useTauriEvents() {
       }
     })
     addListener<MicAuthStatus>('permissions:mic_status', setMicAuthStatus)
+
+    // Dictation finished but nothing was focused to paste into — the text was
+    // left on the clipboard. Surface the manual-paste tip, and clear any soft
+    // polish/STT error so it doesn't mask (or re-appear after) the tip. A
+    // permission error never reaches this path — it bails before output — so
+    // it's safe to clear; we guard against it anyway.
+    addListener<void>('output:no_target', () => {
+      setClipboardTip(true)
+      const err = useAppStore.getState().pipelineError
+      if (err && err !== 'ACCESSIBILITY_REQUIRED' && err !== 'MICROPHONE_DENIED') {
+        setPipelineError(null)
+      }
+    })
 
     addListener<void>('tray:settings', () => {
       window.location.hash = '#/settings'
@@ -135,5 +151,6 @@ export function useTauriEvents() {
     setCorrectionSuggestion,
     setAccessibilityTrusted,
     setMicAuthStatus,
+    setClipboardTip,
   ])
 }

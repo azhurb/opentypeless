@@ -75,6 +75,7 @@
     "errorOccurred": "发生错误",
     "accessibilityRequired": "需要辅助功能权限 — 点击打开设置",
     "microphoneDenied": "麦克风已被拒绝 — 点击打开设置",
+    "clipboardTip": "已复制 — 按 {{shortcut}} 粘贴",
     "openMainWindow": "打开主窗口",
     "settings": "设置",
     "history": "历史记录",

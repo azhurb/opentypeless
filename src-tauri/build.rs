@@ -15,6 +15,15 @@ fn main() {
             .compile("otl_mic_permission");
         println!("cargo:rustc-link-lib=framework=AVFoundation");
         println!("cargo:rerun-if-changed=src/audio/mic_permission.m");
+
+        // Delayed-clipboard provider: lazy NSPasteboard rendering so the output
+        // path can detect whether a paste actually landed (see clipboard.rs).
+        cc::Build::new()
+            .file("src/output/pasteboard_provider.m")
+            .flag("-fobjc-arc")
+            .compile("otl_pasteboard_provider");
+        println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rerun-if-changed=src/output/pasteboard_provider.m");
     }
     tauri_build::build()
 }

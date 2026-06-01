@@ -30,6 +30,15 @@ fn with_trailing_space(text: &str) -> String {
     out
 }
 
+/// Keep the dictation text on the clipboard and show the manual-paste tip when
+/// the paste did not land (no app consumed it) — but never in a terminal, which
+/// is a reliable paste target whose daily CLI flow shouldn't be interrupted.
+/// The paste path already reports `landed = true` for terminals; the explicit
+/// `is_terminal` guard is defense-in-depth so a tip can never fire there.
+fn should_retain_on_clipboard(landed: bool, is_terminal: bool) -> bool {
+    !landed && !is_terminal
+}
+
 /// On macOS, verify whether the process has been granted Accessibility (Assistive Access)
 /// permission. The paste path posts CGEvents directly and the selected-text capture goes
 /// through enigo's CGEventPost; both require this permission, and without it the OS silently
@@ -1035,7 +1044,26 @@ impl PipelineHandle {
         // "hello world.goodbye."). History stores the un-normalized text.
         let typed = with_trailing_space(text);
 
-        output::paste_text(&self.app_handle, &typed, app_ctx).await?;
+        // Paste, then decide based on whether the receiving app actually
+        // consumed it. For a single, non-terminal paste the output path uses
+        // delayed-clipboard rendering to observe consumption; terminals and
+        // chunked pastes are treated as reliable targets (always landed). When
+        // nothing consumed the paste, the dictation was left on the clipboard —
+        // surface a "press ⌘V to paste" tip so it isn't silently lost.
+        //
+        // `editable` (Accessibility seeing a focused text field) is passed so the
+        // output path only restores the user's previous clipboard when it's
+        // confident the paste landed in a field — a browser paste we can't verify
+        // leaves the dictation on the clipboard instead of restoring over it.
+        let is_terminal = output::target_is_terminal(app_ctx);
+        let editable = crate::correction::focused_editable_present();
+        let outcome = output::paste_text(&self.app_handle, &typed, app_ctx, editable).await?;
+        let retain = should_retain_on_clipboard(outcome.landed, is_terminal);
+
+        if retain {
+            tracing::info!("Output paste did not land; left text on clipboard for manual paste");
+            let _ = self.app_handle.emit_to("capsule", "output:no_target", ());
+        }
 
         let _ = self.app_handle.emit("pipeline:target_app", &app_ctx.app_name);
 
@@ -1089,7 +1117,34 @@ impl PipelineHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::{output_error_message, with_trailing_space, ACCESSIBILITY_REQUIRED_CODE};
+    use super::{
+        output_error_message, should_retain_on_clipboard, with_trailing_space,
+        ACCESSIBILITY_REQUIRED_CODE,
+    };
+
+    #[test]
+    fn retain_when_paste_did_not_land_and_not_terminal() {
+        // The case the feature exists for: nothing consumed the paste in an
+        // ordinary app → keep it on the clipboard and show the tip.
+        assert!(should_retain_on_clipboard(false, false));
+    }
+
+    #[test]
+    fn no_retain_when_paste_landed() {
+        // Normal successful paste — restore the clipboard, no tip.
+        assert!(!should_retain_on_clipboard(true, false));
+    }
+
+    #[test]
+    fn no_retain_in_terminal_even_when_not_landed() {
+        // Terminal guard: terminals are reliable paste targets, so never tip.
+        assert!(!should_retain_on_clipboard(false, true));
+    }
+
+    #[test]
+    fn no_retain_when_landed_in_terminal() {
+        assert!(!should_retain_on_clipboard(true, true));
+    }
 
     #[test]
     fn appends_single_space_to_normal_text() {

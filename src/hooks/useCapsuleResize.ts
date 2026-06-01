@@ -12,9 +12,13 @@ function getSizeForState(
   hasError: boolean,
   contextMenuOpen: boolean,
   hasCorrectionToast: boolean,
+  hasClipboardTip: boolean,
 ): CapsuleSize {
   if (contextMenuOpen) return { width: 220, height: 220 }
   if (hasError) return { width: 200, height: 36 }
+  // Clipboard tip: wide pill for "Copied — press ⌘V to paste". Shown post-
+  // output (state is idle), so size it here rather than in the state switch.
+  if (hasClipboardTip) return { width: 220, height: 36 }
   // Correction toast: wide pill that replaces the idle mic; needs room for
   // "Added \"<word>\" to your dictionary" plus the Undo button.
   if (hasCorrectionToast && state === 'idle') return { width: 320, height: 36 }
@@ -47,6 +51,7 @@ export function useCapsuleResize() {
   const capsuleAutoHide = useAppStore((s) => s.config.capsule_auto_hide)
   const configLoaded = useAppStore((s) => s.configLoaded)
   const correctionSuggestion = useAppStore((s) => s.correctionSuggestion)
+  const clipboardTip = useAppStore((s) => s.clipboardTip)
   const initialized = useRef(false)
   const prevWindowSize = useRef<{ width: number; height: number } | null>(null)
   const prevCorrectionPresent = useRef(false)
@@ -62,12 +67,13 @@ export function useCapsuleResize() {
   // clearing, error timing out, and pipeline transitions all flow through
   // the same path.
   const shouldBeVisible =
-    !capsuleAutoHide
-    || pipelineState !== 'idle'
-    || hasError
-    || hasCorrectionToast
-    || contextMenuOpen
-    || capsuleExpanded
+    !capsuleAutoHide ||
+    pipelineState !== 'idle' ||
+    hasError ||
+    hasCorrectionToast ||
+    clipboardTip ||
+    contextMenuOpen ||
+    capsuleExpanded
 
   useEffect(() => {
     const size = getSizeForState(
@@ -76,6 +82,7 @@ export function useCapsuleResize() {
       hasError,
       contextMenuOpen,
       hasCorrectionToast,
+      clipboardTip,
     )
     const windowWidth = size.width + 24
     const windowHeight = size.height + 24
@@ -210,6 +217,7 @@ export function useCapsuleResize() {
     configLoaded,
     setContextMenuReady,
     hasCorrectionToast,
+    clipboardTip,
     shouldBeVisible,
   ])
 
@@ -219,5 +227,6 @@ export function useCapsuleResize() {
     hasError,
     contextMenuOpen,
     hasCorrectionToast,
+    clipboardTip,
   )
 }
