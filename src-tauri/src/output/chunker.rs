@@ -91,7 +91,7 @@ fn cli_chunk_limit(kind: CliKind) -> ChunkLimit {
 /// Includes pure terminal emulators (Terminal.app, iTerm2, Ghostty, …)
 /// plus editors and IDEs that host an integrated terminal panel where a
 /// CLI may be running (VS Code, Cursor, IntelliJ family).
-fn is_terminal_like(bundle_id: &str) -> bool {
+pub(crate) fn is_terminal_like(bundle_id: &str) -> bool {
     matches!(
         bundle_id,
         // Pure terminal emulators

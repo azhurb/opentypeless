@@ -158,6 +158,84 @@ fn read_focused_value() -> Option<(String, bool)> {
     }
 }
 
+/// AX roles that can receive pasted text. A focused element with one of these
+/// roles is a paste target we can be confident about.
+fn is_editable_role(role: &str) -> bool {
+    matches!(
+        role,
+        "AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField" | AX_SECURE_TEXT_FIELD
+    )
+}
+
+/// True only when the system-wide focused UI element is an editable text element
+/// — a paste target we can be confident about. Returns false when nothing is
+/// focused, the focused element is non-editable (a button, a window, the menu
+/// bar, a browser tab strip), or its role can't be read (a browser
+/// contenteditable, which is invisible to Accessibility).
+///
+/// This is deliberately a *positive-only* signal used to gate clipboard
+/// *restore*: we restore the user's previous clipboard only when we're confident
+/// the paste landed in a field. An unrecognized target (browser web content)
+/// returns false, so the dictation is left on the clipboard rather than risking
+/// restoring over a paste we couldn't verify. When Accessibility isn't granted
+/// we also return false — the caller already gates the paste on AX, so this is a
+/// defensive fallback that errs toward keeping the dictation.
+pub fn focused_editable_present() -> bool {
+    unsafe {
+        if !crate::pipeline::is_accessibility_trusted() {
+            return false;
+        }
+        let attr_focused = cfstr(b"AXFocusedUIElement\0");
+        let attr_role = cfstr(b"AXRole\0");
+        if attr_focused.is_null() || attr_role.is_null() {
+            if !attr_focused.is_null() {
+                CFRelease(attr_focused);
+            }
+            if !attr_role.is_null() {
+                CFRelease(attr_role);
+            }
+            return false;
+        }
+        let system_wide = AXUIElementCreateSystemWide();
+        if system_wide.is_null() {
+            CFRelease(attr_focused);
+            CFRelease(attr_role);
+            return false;
+        }
+        let mut focused: *mut c_void = ptr::null_mut();
+        let err = AXUIElementCopyAttributeValue(system_wide, attr_focused, &mut focused);
+        if err != 0 || focused.is_null() {
+            if !focused.is_null() {
+                CFRelease(focused);
+            }
+            CFRelease(system_wide);
+            CFRelease(attr_focused);
+            CFRelease(attr_role);
+            return false;
+        }
+
+        let mut role_ref: *mut c_void = ptr::null_mut();
+        let role_err = AXUIElementCopyAttributeValue(focused, attr_role, &mut role_ref);
+        let role = if role_err == 0 && !role_ref.is_null() {
+            let r = cf_string_to_rust(role_ref);
+            CFRelease(role_ref);
+            r
+        } else {
+            None
+        };
+
+        CFRelease(focused);
+        CFRelease(system_wide);
+        CFRelease(attr_focused);
+        CFRelease(attr_role);
+
+        match role {
+            Some(r) => is_editable_role(&r),
+            None => false,
+        }
+    }
+}
+
 impl FocusedField for MacOsFocusedField {
     fn snapshot(&self, typed_text: &str) -> Option<FieldSnapshot> {
         let (value, is_secure) = read_focused_value()?;

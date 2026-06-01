@@ -141,6 +141,11 @@ interface AppState {
   pipelineError: string | null
   setPipelineError: (error: string | null) => void
 
+  // Clipboard paste tip — shown when a dictation had no focused target to
+  // paste into, so the text was left on the clipboard for manual ⌘V.
+  clipboardTip: boolean
+  setClipboardTip: (show: boolean) => void
+
   // Correction suggestion (learn from corrections toast)
   correctionSuggestion: CorrectionSuggestion | null
   setCorrectionSuggestion: (s: CorrectionSuggestion | null) => void
@@ -247,6 +252,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   pipelineError: null,
   setPipelineError: (pipelineError) => set({ pipelineError }),
+
+  clipboardTip: false,
+  setClipboardTip: (clipboardTip) => set({ clipboardTip }),
 
   correctionSuggestion: null,
   setCorrectionSuggestion: (correctionSuggestion) => set({ correctionSuggestion }),

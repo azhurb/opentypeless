@@ -312,6 +312,26 @@ pub fn current_platform_field() -> Option<Arc<dyn FocusedField>> {
     None
 }
 
+/// True only when a focused, editable text element currently holds keyboard
+/// focus — a paste target we can be confident about. The output path uses this
+/// to gate clipboard *restore*: the user's previous clipboard is restored only
+/// when we're confident the paste landed in a field, so a target we can't verify
+/// (browser web content) leaves the dictation on the clipboard rather than
+/// risking restoring over it.
+///
+/// macOS: delegates to the Accessibility probe. Non-macOS: always `false` (no
+/// detection yet), so restore is conservatively skipped — but the single-paste
+/// detection path is macOS-only anyway, so this is unused off macOS.
+#[cfg(target_os = "macos")]
+pub fn focused_editable_present() -> bool {
+    ax_macos::focused_editable_present()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn focused_editable_present() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -35,6 +35,7 @@ Event names emitted by the backend:
 - Permissions: `permissions:mic_status` — emitted by Rust when the pipeline refuses to start because Microphone is denied; payload is the `MicAuthStatus` snake-case string (`not_determined` | `restricted` | `denied` | `authorized`). The frontend writes it straight into the Zustand store.
 - Audio/STT/LLM streams: `audio:volume`, `stt:partial`, `stt:final`, `llm:chunk`.
 - Corrections: `correction:suggest` (emitted to the capsule window only). `dictionary:changed` (emitted by `correction_undo` so any window that cares re-fetches via `get_dictionary`).
+- Output: `output:no_target` (emitted to the capsule window only, no payload) — a paste did not land anywhere, so the dictation was left on the clipboard. `useTauriEvents` sets `clipboardTip` (and clears any soft pipeline error) so the capsule shows a "press ⌘V to paste" tip; it auto-dismisses and is cleared on the next `recording`. macOS only; never fired for terminals or chunked pastes. See [Pipeline → Paste-landing detection](pipeline.md#paste-landing-detection).
 - Config: `config:changed` — emitted by `update_config` after persisting; payload is the full `AppConfig`. Every webview's `useTauriEvents` listens and `setConfig`s its local Zustand copy. Without this fan-out the capsule window keeps the stale config it loaded at mount, so settings like `capsule_auto_hide` would not take effect until the next launch.
 - Tray: `tray:settings`, `tray:history`, `tray:about`.
 

@@ -9,13 +9,27 @@ import { CapsuleProcessing } from './CapsuleProcessing'
 import { CapsulePolishing } from './CapsulePolishing'
 import { CapsuleComplete } from './CapsuleComplete'
 import { CapsuleError } from './CapsuleError'
+import { CapsuleClipboardTip } from './CapsuleClipboardTip'
 import { CapsuleContextMenu } from './CapsuleContextMenu'
 import { CorrectionToast } from './CorrectionToast'
 
 const DRAG_THRESHOLD = 5
 
-function getCapsuleState(pipelineState: string, hasError: boolean) {
-  if (hasError) return 'error'
+// Permission errors are actionable (tap to open Settings) and never coincide
+// with a clipboard retain — they bail before output — so they always win.
+const PERMISSION_ERRORS = new Set(['ACCESSIBILITY_REQUIRED', 'MICROPHONE_DENIED'])
+
+function getCapsuleState(
+  pipelineState: string,
+  pipelineError: string | null,
+  clipboardTip: boolean,
+) {
+  if (pipelineError && PERMISSION_ERRORS.has(pipelineError)) return 'error'
+  // When a dictation was left on the clipboard (no paste target), that tip is
+  // the most useful thing to show — even if polish failed, the raw text is
+  // recoverable — so it outranks a transient (soft) polish/STT error.
+  if (clipboardTip) return 'clipboardTip'
+  if (pipelineError) return 'error'
   return pipelineState
 }
 
@@ -27,6 +41,8 @@ export function Capsule() {
   const contextMenuReady = useAppStore((s) => s.contextMenuReady)
   const setContextMenuReady = useAppStore((s) => s.setContextMenuReady)
   const correctionSuggestion = useAppStore((s) => s.correctionSuggestion)
+  const clipboardTip = useAppStore((s) => s.clipboardTip)
+  const setClipboardTip = useAppStore((s) => s.setClipboardTip)
   const { startRecording, stopRecording, isRecording, isProcessing } = useRecording()
 
   const dragStart = useRef<{ x: number; y: number } | null>(null)
@@ -35,7 +51,7 @@ export function Capsule() {
   useCapsuleResize()
 
   const hasError = pipelineError !== null
-  const capsuleState = getCapsuleState(pipelineState, hasError)
+  const capsuleState = getCapsuleState(pipelineState, pipelineError, clipboardTip)
   // While a correction toast is visible in idle mode, the toast takes the whole
   // capsule window — hide the regular pill so they don't overlap.
   const showToast = correctionSuggestion !== null && pipelineState === 'idle' && !hasError
@@ -92,6 +108,10 @@ export function Capsule() {
             ),
           )
           .catch(() => {})
+      } else if (clipboardTip) {
+        // Tip is informational — a click just dismisses it (don't fall through
+        // to startRecording).
+        setClipboardTip(false)
       } else if (!isProcessing && !hasError && pipelineState === 'idle') {
         startRecording()
       }
@@ -102,6 +122,8 @@ export function Capsule() {
       hasError,
       pipelineError,
       pipelineState,
+      clipboardTip,
+      setClipboardTip,
       startRecording,
       stopRecording,
     ],
@@ -153,6 +175,7 @@ export function Capsule() {
               {capsuleState === 'polishing' && <CapsulePolishing />}
               {capsuleState === 'outputting' && <CapsuleComplete />}
               {capsuleState === 'error' && <CapsuleError />}
+              {capsuleState === 'clipboardTip' && <CapsuleClipboardTip />}
             </motion.div>
           </AnimatePresence>
         </motion.div>
