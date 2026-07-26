@@ -58,6 +58,19 @@
 }
 
 /* Base styles */
+
+/* Tell the platform which palette to render native widgets in. Without this,
+   `<select>` dropdown popups, scrollbars, and focus rings stay light while the
+   rest of the app is dark, because the UA has no way to know the theme —
+   `useTheme` only toggles a `.dark` class, which native widgets can't see. */
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {
