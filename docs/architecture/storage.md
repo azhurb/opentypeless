@@ -6,9 +6,15 @@ Evidence: `src-tauri/src/storage/mod.rs`, `src-tauri/src/credentials.rs`, `src-t
 
 ## Where secrets live
 
-**API keys are never written to `settings.json`, and never sent to the webview.** They live
-in the OS credential vault — see [Credentials](#credentials-os-credential-vault). Everything
-else on this page is non-secret configuration.
+**API keys are never written to `settings.json`, and never sent to the webview.**
+
+| Platform | Store | Why |
+| --- | --- | --- |
+| Windows | Credential Manager | user-scoped, no prompts |
+| Linux | Secret Service, file fallback | unlocks with the login session |
+| **macOS** | **`credentials.json`, `0600`** | the Keychain would prompt for a password after every app update — see [below](#macos-deliberately-does-not-use-the-keychain) |
+
+Everything else on this page is non-secret configuration.
 
 ## Config (`tauri-plugin-store`)
 
@@ -118,6 +124,35 @@ Other cases: an empty legacy field is dropped without touching the vault; an exi
 entry wins over stale plaintext (and the plaintext is dropped); a missing `*_provider` leaves
 the plaintext in place, since there is nothing to file it under.
 
+### macOS deliberately does not use the Keychain
+
+A Keychain item carries a XARA **partition list** naming the code identities allowed to read
+it. Entries are keyed by `teamid:` only when the app is signed with an Apple Developer ID;
+without one macOS falls back to `cdhash:` — the hash of that exact binary.
+
+This project signs with a self-signed certificate and has no Apple team, so every release is
+a different identity to the partition list. Measured with two pipeline-signed builds that
+share one certificate:
+
+```
+ACL partition mismatch: client cdhash:9fd54284…  ACL (cdhash:d1f9d146…)
+asking user about XARA partition for 'cdhash:9fd54284…'
+```
+
+That is a keychain-password prompt for the user after **every app update**, which is worse
+than what the app did before this change (a plaintext config file and no prompts). So
+`credentials::default_store` uses [`FileVault`] on macOS: owner-only (`0600`), no prompts,
+and still not the world-readable `settings.json` keys used to live in.
+
+Note the same certificate is **not** enough — it is the Team ID that makes partition entries
+stable. `certificate leaf = H"…"` in the designated requirement governs the *ACL*; the
+partition list is a separate check and is what actually prompts here.
+
+**This is reversible the day the project has an Apple Developer ID** ($99/yr): a Team ID makes
+partition entries stable across versions, `default_store` should then use
+`SystemCredentialVault` on macOS, and `FILE_STORE_IS_THE_DEFAULT` becomes `false`. Pinned by
+`credentials::tests::macos_keeps_keys_out_of_the_keychain`.
+
 ### The credential store may never break the app
 
 `FallbackVault` wraps the real vault and falls back to `FileVault` — a `0600`
@@ -135,8 +170,9 @@ The rule: the OS credential store is the default and strongly preferred home,
 but it may never be the reason the app stops working.
 
 - A key only reaches the file when the store **refuses the write**.
-- **The contents are not encrypted**, so `get_credential_status` reports
-  `saved_unencrypted` for it and both Settings panes show a visible warning.
+- **The contents are not encrypted**, so on Windows and Linux `get_credential_status` reports
+  `saved_unencrypted` and both Settings panes show a visible warning. On macOS it is the
+  intended store, so it reports plain `saved` — warning on every launch would cry wolf.
   Storing a secret in the clear silently would be worse than the old
   `settings.json`, because it would be invisible.
 - If the store later starts working, the next save **promotes** the key into it

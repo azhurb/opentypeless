@@ -141,7 +141,7 @@ All settings are accessible from the in-app Settings panel:
 - **General** — hotkey, theme, auto-start
 - **Dictionary** — add custom terms for better transcription accuracy
 
-API keys are stored in your operating system's credential manager — Keychain on macOS, Credential Manager on Windows, Secret Service on Linux — never in a plaintext settings file. If you are upgrading from a version that kept them in `settings.json`, they move across on first launch. All STT/LLM requests go directly from your machine to the provider you configure. There is no cloud account, subscription, telemetry, or auto-update — this fork is BYOK-only.
+API keys are never kept in a plaintext settings file. On Windows they go to Credential Manager and on Linux to the Secret Service; on macOS they go to a file only your account can read, because the Keychain would ask for your password after every app update unless the project pays for an Apple Developer ID. If you are upgrading from a version that kept them in `settings.json`, they move across on first launch. All STT/LLM requests go directly from your machine to the provider you configure. There is no cloud account, subscription, telemetry, or auto-update — this fork is BYOK-only.
 
 ## Architecture
 

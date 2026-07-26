@@ -353,6 +353,52 @@ impl CredentialVault for FallbackVault {
     }
 }
 
+/// Whether this platform keeps secrets in a file rather than an OS credential
+/// store *by design*, so the UI can tell "expected" from "something broke".
+///
+/// True only on macOS — see [`default_store`].
+pub const FILE_STORE_IS_THE_DEFAULT: bool = cfg!(target_os = "macos");
+
+/// The credential store for this platform.
+///
+/// **macOS deliberately does not use the Keychain.** A Keychain item carries a
+/// XARA *partition list* naming the code identities allowed to read it. Those
+/// entries are keyed by `teamid:` only when an app is signed with an Apple
+/// Developer ID; without one, macOS falls back to keying them by `cdhash:` —
+/// the hash of that exact binary. This project signs with a self-signed
+/// certificate and has no Apple team, so **every release would be a different
+/// identity to the partition list and would prompt the user for their keychain
+/// password after each update**. Measured, not assumed: two pipeline-signed
+/// builds sharing one certificate produced
+/// `ACL partition mismatch: client cdhash:9fd54284… ACL (cdhash:d1f9d146…)`.
+///
+/// A password prompt after every update is worse than what this app did before
+/// (a plaintext config file, no prompts), so on macOS keys go to [`FileVault`]:
+/// owner-only (`0600`), no prompts, and still not the world-readable
+/// `settings.json` they used to live in.
+///
+/// Windows and Linux have no equivalent problem — Credential Manager is scoped
+/// to the user account and Secret Service unlocks with the login session — so
+/// they use the real store, with the file only as a fallback.
+///
+/// **This becomes obsolete the moment the project has an Apple Developer ID**
+/// ($99/yr): a Team ID makes partition entries stable across versions, and this
+/// function should then use `SystemCredentialVault` on macOS too.
+pub fn default_store(file_path: std::path::PathBuf) -> SharedVault {
+    let file = std::sync::Arc::new(FileVault::new(file_path));
+    #[cfg(target_os = "macos")]
+    {
+        file
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        std::sync::Arc::new(FallbackVault::new(
+            std::sync::Arc::new(SystemCredentialVault::new()),
+            file,
+        ))
+    }
+}
+
 /// The real vault: Keychain on macOS, Credential Manager on Windows, Secret
 /// Service on Linux (see the per-platform `keyring` features in `Cargo.toml`).
 pub struct SystemCredentialVault;
@@ -991,6 +1037,33 @@ mod tests {
             None,
             "a removed key must not survive anywhere"
         );
+    }
+
+    #[test]
+    fn macos_keeps_keys_out_of_the_keychain() {
+        // Pins the decision in `default_store`. A Keychain item's XARA
+        // partition is keyed by cdhash without an Apple Team ID, so every
+        // release would prompt for the user's keychain password after an
+        // update. Flip this only together with Developer ID signing.
+        let (_, path) = temp_file_vault();
+        let store = default_store(path.clone());
+        let id = CredentialId::stt("deepgram");
+
+        store.write(&id, "dg-key").unwrap();
+
+        if cfg!(target_os = "macos") {
+            assert!(
+                path.exists(),
+                "macOS must write to the file store, not the Keychain"
+            );
+            assert!(FILE_STORE_IS_THE_DEFAULT, "and must not warn about it");
+        } else {
+            assert!(
+                !FILE_STORE_IS_THE_DEFAULT,
+                "elsewhere the OS store is expected, so file storage is a warning"
+            );
+        }
+        assert_eq!(store.read(&id).unwrap(), Some("dg-key".to_string()));
     }
 
     // ─── Migration ───

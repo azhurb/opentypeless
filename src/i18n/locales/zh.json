@@ -136,7 +136,7 @@
     "test": "测试",
     "connectionSuccess": "连接成功",
     "connectionFailed": "连接失败",
-    "storedLocally": "保存在操作系统的凭据管理器中，绝不写入设置文件。",
+    "storedLocally": "仅保存在你的账户本地，绝不写入设置文件。",
     "sttLanguage": "语言",
     "sttLanguages": "识别语言",
     "sttLanguagesAutoHint": "自动检测 — 可使用任何支持的语言讲话。",

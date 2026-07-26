@@ -238,7 +238,10 @@ async fn get_credential_status(
     // field, not fail the whole Settings pane.
     let presence = |id: credentials::CredentialId| match vault.read(&id) {
         Ok(Some(key)) if !key.is_empty() => {
-            if vault.is_fallback(&id) {
+            // File storage is the deliberate default on macOS, so warning about
+            // it there would cry wolf on every launch. Elsewhere it means the
+            // OS store refused the key, which the user does need to know.
+            if vault.is_fallback(&id) && !credentials::FILE_STORE_IS_THE_DEFAULT {
                 KeyPresence::SavedUnencrypted
             } else {
                 KeyPresence::Saved
@@ -1284,19 +1287,11 @@ pub fn run() {
             // without this a user who did not pick "Always Allow" was
             // re-prompted on every dictation.
             //
-            // The fallback under it is what keeps the credential store from
-            // ever being the reason the app stops working: on a Linux box with
-            // no Secret Service provider, `keyring` cannot save a key at all,
-            // and without this a fresh install there would be unusable. Keys
-            // only land in the cleartext file when the store refuses them, and
-            // the Settings pane says so when they do.
+            // Which store depends on the platform, because macOS charges a real
+            // UX price for its Keychain that the other two do not.
+            let credentials_path = data_dir.join("credentials.json");
             let vault: credentials::SharedVault = Arc::new(credentials::CachingVault::new(
-                Arc::new(credentials::FallbackVault::new(
-                    Arc::new(credentials::SystemCredentialVault::new()),
-                    Arc::new(credentials::FileVault::new(
-                        data_dir.join("credentials.json"),
-                    )),
-                )),
+                credentials::default_store(credentials_path),
             ));
             let config_manager = storage::ConfigManager::new(app_handle.clone(), vault.clone());
             let history_store = storage::HistoryStore::new(db_path.clone())

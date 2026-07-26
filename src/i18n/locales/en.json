@@ -136,7 +136,7 @@
     "test": "Test",
     "connectionSuccess": "Connection successful",
     "connectionFailed": "Connection failed",
-    "storedLocally": "Stored in your operating system’s credential manager, never in a settings file.",
+    "storedLocally": "Stored locally in your account, never in a settings file.",
     "sttLanguage": "Language",
     "sttLanguages": "Recognized Languages",
     "sttLanguagesAutoHint": "Auto Detect — speak any supported language.",

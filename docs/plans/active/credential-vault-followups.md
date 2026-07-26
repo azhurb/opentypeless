@@ -55,23 +55,41 @@ Deliberately **not** proposed: a user-facing "disable keychain" toggle. It is a 
 setting most users cannot evaluate, and it would re-legitimize plaintext storage on platforms
 where the vault works fine.
 
-## 2. Code signing
+## 2. Code signing — **now blocks the macOS Keychain**
 
-Release builds are signed with a self-signed "OpenTypeless Release" certificate, so the
-designated requirement is `certificate leaf = H"…"` — stable across versions, and Keychain
-ACLs keep matching after an update. That is sufficient for the credential path.
+Release builds are signed with a self-signed "OpenTypeless Release" certificate. The
+designated requirement (`certificate leaf = H"…"`) *is* stable across versions, so the item
+**ACL** keeps matching — but that is not the check that prompts.
 
-Two things it does not buy, both of which upstream has (they use `APPLE_CERTIFICATE` +
-`APPLE_SIGNING_IDENTITY` + `APPLE_TEAM_ID` and notarize):
+The XARA **partition list** is, and its entries are keyed by `teamid:` only for apps with an
+Apple Developer ID. With no Team ID, macOS keys them by `cdhash:`, so every release is a
+stranger. Measured with two pipeline-signed builds sharing one certificate:
 
-- Gatekeeper still treats the download as unidentified — users get the right-click-Open dance.
-- Rotating the certificate invalidates every existing Keychain ACL, so users would see one
-  prompt after that release. Worth remembering before regenerating it.
+```
+ACL partition mismatch: client cdhash:9fd54284…  ACL (cdhash:d1f9d146…)
+```
 
-Moving to Developer ID + notarization needs an Apple Developer account ($99/yr) — a spend
-decision, not a code one.
+That is why macOS now uses the file store (see
+[`architecture/storage.md`](../../architecture/storage.md#macos-deliberately-does-not-use-the-keychain)).
 
-## 3. Smaller items
+An Apple Developer account ($99/yr) would buy three things at once:
+
+- Stable `teamid:` partitions → the macOS Keychain becomes usable, no prompts across updates.
+- Notarization → no Gatekeeper "unidentified developer" wall on download.
+- Parity with upstream, who pass `APPLE_CERTIFICATE` + `APPLE_SIGNING_IDENTITY` +
+  `APPLE_TEAM_ID` and notarize.
+
+A spend decision, not a code one. When it happens, flip `default_store` to use
+`SystemCredentialVault` on macOS and `FILE_STORE_IS_THE_DEFAULT` to `false`.
+
+## 3. Release workflow accepts a non-tag ref
+
+`release.yml` computes `VERSION="${{ inputs.tag || github.ref_name }}"` with no validation, so
+dispatching it on a *branch* produced a release versioned `0.1.14` out of nowhere and shipped a
+bundle whose About page showed that. A guard rejecting anything that is not `vX.Y.Z` would have
+failed the run loudly instead.
+
+## 4. Smaller items
 
 - `MemoryVault` lives in the shipped binary rather than behind `#[cfg(test)]`, so integration
   tests and other modules' test modules can use it. Nothing constructs one in the app. If that
