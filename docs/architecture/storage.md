@@ -83,12 +83,14 @@ is both an STT and an LLM provider id — gets two independent slots.
 A secret travels one way: the user types it, `set_api_key` puts it in the vault, and nothing
 ever hands it back. `AppConfig` has no key fields, the Zustand store has no key fields, and
 `get_config` returns no secret. What the frontend can ask is *whether* a key exists, via
-`get_credential_status(sttProvider, llmProvider) -> { stt: bool, llm: bool }`.
+`get_credential_status(sttProvider, llmProvider)`, which returns a `KeyPresence` per
+namespace rather than the secret.
 
 Consequences worth knowing:
 
 | Concern | How it works |
 | --- | --- |
+| Store unavailable | Falls back to an unencrypted `credentials.json`, reported as `saved_unencrypted` and shown as a warning. See [above](#the-credential-store-may-never-break-the-app). |
 | Settings / onboarding input | The field is genuinely **empty** with a "saved" placeholder — not a masked value. `keyDrafts[ns] === null` means untouched, so the unsaved-changes bar cannot mistake a placeholder for an edit (the `0.5.0` bug in `CHANGELOG.md`). |
 | Removing a key | "Remove" stages an empty-string draft; Save calls `set_api_key` with `""`, which deletes the entry. It is a pending change like any other setting, not an immediate side effect. |
 | Testing a key | `test_*` / `bench_*` / `fetch_llm_models` take `api_key: Option<String>`. `Some(candidate)` probes an unsaved key — required by onboarding, where nothing is saved yet, and by Settings, where probing the stored key right after pasting a new one would report on the wrong credential. `None` means "use the vault". A candidate is never persisted as a side effect of testing. |
@@ -115,6 +117,33 @@ vault is re-attached by every `save` until a later launch succeeds.
 Other cases: an empty legacy field is dropped without touching the vault; an existing vault
 entry wins over stale plaintext (and the plaintext is dropped); a missing `*_provider` leaves
 the plaintext in place, since there is nothing to file it under.
+
+### The credential store may never break the app
+
+`FallbackVault` wraps the real vault and falls back to `FileVault` — a `0600`
+JSON file at `<app_data_dir>/credentials.json` — when the store is genuinely
+unavailable.
+
+This is not optional polish. On Linux, `keyring`'s `linux-native-sync-persistent`
+writes keyutils *and* Secret Service, and **reverts the keyutils write if the
+Secret Service write fails** (verified in `keyring-3.6.3/src/keyutils_persistent.rs`).
+On a minimal WM or headless box with no Secret Service provider, a fresh install
+could not save an API key at all — the app would be unusable, which is strictly
+worse than the plaintext config this change replaced.
+
+The rule: the OS credential store is the default and strongly preferred home,
+but it may never be the reason the app stops working.
+
+- A key only reaches the file when the store **refuses the write**.
+- **The contents are not encrypted**, so `get_credential_status` reports
+  `saved_unencrypted` for it and both Settings panes show a visible warning.
+  Storing a secret in the clear silently would be worse than the old
+  `settings.json`, because it would be invisible.
+- If the store later starts working, the next save **promotes** the key into it
+  and deletes the cleartext copy.
+- `delete` always clears both, so a removed key cannot survive in the other.
+- A read error with no fallback copy still surfaces as an error, never as
+  "no key set".
 
 ### Reads are cached for the session
 
@@ -147,9 +176,8 @@ would only reach users if the release signing certificate were rotated.
 
 Windows and Linux have no equivalent per-app prompt: Credential Manager is
 scoped to the user account, and Secret Service unlocks with the login session.
-**Needs confirmation**: behavior on a Linux box with no Secret Service provider
-at all (minimal WM, headless) — see the open follow-up in
-[`../plans/active/credential-vault-followups.md`](../plans/active/credential-vault-followups.md).
+A Linux box with no Secret Service provider at all (minimal WM, headless) cannot
+use the vault; that is what the fallback above is for.
 
 ### Vault errors are not "no key"
 
@@ -159,8 +187,9 @@ not configured", which sends the user to re-enter a key that is already there. T
 surfaces a distinct message and aborts; the LLM path logs a warning and skips polish, because
 failing the dictation outright would throw away a transcript the user already spoke.
 
-The same distinction reaches the UI. `get_credential_status` returns a three-state
-`KeyPresence` per namespace — `saved` / `missing` / `unreadable` — not a boolean. Reporting an
+The same distinction reaches the UI. `get_credential_status` returns a four-state
+`KeyPresence` per namespace — `saved` / `saved_unencrypted` / `missing` /
+`unreadable` — not a boolean. Reporting an
 unreadable vault as `missing` renders an empty field, which invites the user to retype the key
 or press Remove, destroying a credential that was fine. On macOS that is one declined prompt
 away. The `unreadable` state shows an explicit "couldn't read your keychain" message and

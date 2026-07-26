@@ -132,6 +132,7 @@
     "apiKeyRemove": "Remove",
     "apiKeyUnreadable": "Couldn’t read your keychain — your saved key may still be there",
     "apiKeyUnreadableHint": "Unlock your login keychain and reopen Settings. Entering a key here replaces whatever is stored.",
+    "apiKeyUnencrypted": "Stored unencrypted — no system credential store is available on this machine",
     "test": "Test",
     "connectionSuccess": "Connection successful",
     "connectionFailed": "Connection failed",

@@ -4,23 +4,39 @@ Written 2026-07-26, after the keychain migration landed
 ([`../completed/keychain-migration.md`](../completed/keychain-migration.md), #36). These are
 the questions that surfaced during local testing and were deliberately left out of that PR.
 
-## 1. Linux with no Secret Service provider — **the real gap**
+## 1. Linux with no Secret Service provider — **fixed, wants a real-machine check**
 
 `keyring`'s `linux-native-sync-persistent` is `linux-native` (kernel keyutils, session-scoped)
 plus `sync-secret-service` (D-Bus, for persistence across reboots). On a normal desktop the
 login keyring is unlocked by the session manager and this is invisible.
 
-The open question is a box with **no Secret Service provider at all** — a minimal WM (i3,
-sway without `gnome-keyring`), a headless install, some containers. **Needs confirmation** on
-a real such machine, but the likely behavior is that vault writes fail outright, and if so:
+On a box with **no Secret Service provider at all** — a minimal WM (i3, sway without
+`gnome-keyring`), a headless install, many containers — it is not merely degraded. Verified by
+reading `keyring-3.6.3/src/keyutils_persistent.rs`:
 
-- **A fresh install cannot save a key at all.** `set_api_key` propagates the error, the
-  Settings pane shows "Could not save the key to the system credential store", and there is no
-  other path — the app is unusable. This is worse than the pre-migration behavior, where the
-  key simply went into `settings.json`.
+- `set_secret` writes keyutils, then Secret Service, and **if the Secret Service write fails
+  it reverts keyutils and returns the error**. There is no partial success to fall back on.
+- `get_secret` reads keyutils first and falls back to Secret Service — fine in principle, but
+  nothing was ever stored.
+- `delete_credential` best-efforts keyutils, then requires Secret Service.
+
+Consequences:
+
+- **A fresh install cannot save a key at all.** `set_api_key` propagates the error, Settings
+  shows "Could not save the key to the system credential store", and there is no other path —
+  the app is unusable. Strictly worse than the pre-migration behavior, where the key went into
+  `settings.json`.
 - An *upgrade* on such a box degrades safely: the migration keeps the plaintext and retries
   (that is what the write-then-clear ordering buys). But the pipeline reads only the vault, so
   the retained plaintext is preserved and never used — the user keeps a key they cannot spend.
+
+**Fixed** by `FallbackVault` + `FileVault`: when the store refuses a write the key goes to a
+`0600` `credentials.json` and the Settings pane says it is unencrypted; a later working store
+promotes it back out. Covered by unit tests against a failing vault.
+
+Still wants confirmation **on a real vault-less Linux box** — the tests simulate the failure
+with `MemoryVault::failing`, which is not the same as proving `keyring` fails the way the
+source says it does there.
 
 Note upstream has the same dependency and the same failing `set_credential`, but their
 `AppConfig` still carries `stt_api_key` / `llm_api_key` and `resolve_config_secret` **prefers

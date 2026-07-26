@@ -87,6 +87,14 @@ pub trait CredentialVault: Send + Sync {
     fn write(&self, id: &CredentialId, secret: &str) -> Result<()>;
     /// Deleting an entry that does not exist is `Ok(())`.
     fn delete(&self, id: &CredentialId) -> Result<()>;
+
+    /// Whether this secret is being kept in the unencrypted fallback rather
+    /// than the OS credential store. The UI has to be able to say so — storing
+    /// a key in cleartext without telling the user would be worse than the
+    /// plaintext config we migrated away from, because it would be invisible.
+    fn is_fallback(&self, _id: &CredentialId) -> bool {
+        false
+    }
 }
 
 /// The vault as held in Tauri managed state and by [`crate::storage::ConfigManager`].
@@ -162,6 +170,186 @@ impl CredentialVault for CachingVault {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&id.account());
         Ok(())
+    }
+
+    fn is_fallback(&self, id: &CredentialId) -> bool {
+        // Never cached: it is a cheap local check, and a stale "stored
+        // unencrypted" warning is exactly the kind of thing that must not lag.
+        self.inner.is_fallback(id)
+    }
+}
+
+/// Last-resort store: a JSON file in the app data directory, `0600` on unix.
+///
+/// **The contents are not encrypted.** This exists only for machines where the
+/// OS credential store is genuinely unavailable, and every path that writes to
+/// it has to tell the user. See [`FallbackVault`].
+pub struct FileVault {
+    path: std::path::PathBuf,
+    lock: std::sync::Mutex<()>,
+}
+
+impl FileVault {
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            lock: std::sync::Mutex::new(()),
+        }
+    }
+
+    fn load(&self) -> std::collections::BTreeMap<String, String> {
+        std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    fn store(&self, entries: &std::collections::BTreeMap<String, String>) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Write to a temp file and rename, so a crash mid-write cannot leave a
+        // truncated file that loses a key we have no other copy of.
+        let tmp = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(entries)?)?;
+        Self::restrict(&tmp)?;
+        std::fs::rename(&tmp, &self.path)?;
+        Self::restrict(&self.path)
+    }
+
+    /// Owner-only permissions. A cleartext secret readable by other accounts on
+    /// a shared machine would be a step backwards even from `settings.json`.
+    fn restrict(path: &std::path::Path) -> Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(not(unix))]
+        let _ = path;
+        Ok(())
+    }
+
+    fn has(&self, id: &CredentialId) -> bool {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.load().contains_key(&id.account())
+    }
+}
+
+impl CredentialVault for FileVault {
+    fn read(&self, id: &CredentialId) -> Result<Option<String>> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(self.load().get(&id.account()).cloned())
+    }
+
+    fn write(&self, id: &CredentialId, secret: &str) -> Result<()> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut entries = self.load();
+        entries.insert(id.account(), secret.to_string());
+        self.store(&entries)
+    }
+
+    fn delete(&self, id: &CredentialId) -> Result<()> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut entries = self.load();
+        if entries.remove(&id.account()).is_none() {
+            return Ok(());
+        }
+        if entries.is_empty() {
+            // Leave no empty cleartext file lying around.
+            let _ = std::fs::remove_file(&self.path);
+            return Ok(());
+        }
+        self.store(&entries)
+    }
+
+    fn is_fallback(&self, id: &CredentialId) -> bool {
+        self.has(id)
+    }
+}
+
+/// Uses the OS credential store, and falls back to [`FileVault`] when it is
+/// genuinely unavailable.
+///
+/// This exists because the vault is not optional infrastructure everywhere. On
+/// Linux, `keyring`'s `linux-native-sync-persistent` writes keyutils *and*
+/// Secret Service, and **reverts the keyutils write if Secret Service fails**
+/// (`keyutils_persistent.rs`). On a minimal WM or headless box with no Secret
+/// Service provider, that means a fresh install could not save an API key at
+/// all — the app would be unusable, which is strictly worse than the plaintext
+/// config this whole change replaced.
+///
+/// So the rule is: the credential store is the default and strongly preferred
+/// home, but it may never be the reason the app stops working. When it is
+/// unreachable the key goes to a cleartext file and the UI says so.
+pub struct FallbackVault {
+    primary: SharedVault,
+    fallback: SharedVault,
+}
+
+impl FallbackVault {
+    pub fn new(primary: SharedVault, fallback: SharedVault) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+impl CredentialVault for FallbackVault {
+    fn read(&self, id: &CredentialId) -> Result<Option<String>> {
+        match self.primary.read(id) {
+            Ok(Some(secret)) => Ok(Some(secret)),
+            // No entry in the store — it may have been written to the fallback
+            // on a machine where the store was down.
+            Ok(None) => self.fallback.read(id),
+            Err(e) => match self.fallback.read(id) {
+                Ok(Some(secret)) => Ok(Some(secret)),
+                // Nothing in the fallback either, so the store's error is the
+                // real answer and must surface rather than becoming "no key".
+                _ => Err(e),
+            },
+        }
+    }
+
+    fn write(&self, id: &CredentialId, secret: &str) -> Result<()> {
+        match self.primary.write(id, secret) {
+            Ok(()) => {
+                // Promoted out of cleartext — drop the fallback copy so the
+                // secret is not left sitting in a file nobody looks at again.
+                if let Err(e) = self.fallback.delete(id) {
+                    tracing::warn!(
+                        "could not clear the fallback copy of {}: {:#}",
+                        id.account(),
+                        e
+                    );
+                }
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "credential store rejected {}, falling back to unencrypted file storage: {:#}",
+                    id.account(),
+                    e
+                );
+                self.fallback.write(id, secret)
+            }
+        }
+    }
+
+    fn delete(&self, id: &CredentialId) -> Result<()> {
+        // Both, always: a key the user asked to remove must not survive in the
+        // other store.
+        let primary = self.primary.delete(id);
+        let fallback = self.fallback.delete(id);
+        match (primary, fallback) {
+            (Err(e), Err(_)) => Err(e),
+            _ => Ok(()),
+        }
+    }
+
+    fn is_fallback(&self, id: &CredentialId) -> bool {
+        // Only meaningful when the store does not have it: a promoted key lives
+        // in both for a moment, and the store wins.
+        !matches!(self.primary.read(id), Ok(Some(_)))
+            && matches!(self.fallback.read(id), Ok(Some(_)))
     }
 }
 
@@ -655,6 +843,153 @@ mod tests {
             vault.read(&id).unwrap(),
             None,
             "removed key must stay removed"
+        );
+    }
+
+    // ─── FileVault / FallbackVault ───
+
+    fn temp_file_vault() -> (FileVault, std::path::PathBuf) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!("otl-vault-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("creds-{}.json", N.fetch_add(1, Ordering::Relaxed)));
+        let _ = std::fs::remove_file(&path);
+        (FileVault::new(path.clone()), path)
+    }
+
+    #[test]
+    fn file_vault_round_trips_and_deletes() {
+        let (vault, path) = temp_file_vault();
+        let id = CredentialId::stt("deepgram");
+
+        assert_eq!(vault.read(&id).unwrap(), None);
+        vault.write(&id, "dg-key").unwrap();
+        assert_eq!(vault.read(&id).unwrap(), Some("dg-key".to_string()));
+
+        vault.delete(&id).unwrap();
+        assert_eq!(vault.read(&id).unwrap(), None);
+        assert!(!path.exists(), "no empty cleartext file should linger");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_vault_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (vault, path) = temp_file_vault();
+        vault
+            .write(&CredentialId::stt("deepgram"), "dg-key")
+            .unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "a cleartext secret must not be readable by other accounts"
+        );
+    }
+
+    /// The case this whole fallback exists for: `keyring`'s Linux backend
+    /// reverts its keyutils write when Secret Service is missing, so a fresh
+    /// install on a minimal WM could not save a key at all.
+    #[test]
+    fn key_is_still_saved_when_the_credential_store_is_unavailable() {
+        let store = Arc::new(MemoryVault::failing("no secret service provider"));
+        let (file, _) = temp_file_vault();
+        let vault = FallbackVault::new(store, Arc::new(file));
+        let id = CredentialId::stt("deepgram");
+
+        vault.write(&id, "dg-key").expect("saving must not fail");
+
+        assert_eq!(vault.read(&id).unwrap(), Some("dg-key".to_string()));
+        assert!(
+            vault.is_fallback(&id),
+            "the UI has to be able to warn that this key is unencrypted"
+        );
+    }
+
+    #[test]
+    fn the_credential_store_is_preferred_when_it_works() {
+        let store = Arc::new(MemoryVault::new());
+        let (file, path) = temp_file_vault();
+        let vault = FallbackVault::new(store.clone(), Arc::new(file));
+        let id = CredentialId::llm("groq");
+
+        vault.write(&id, "gq-key").unwrap();
+
+        assert_eq!(store.read(&id).unwrap(), Some("gq-key".to_string()));
+        assert!(!vault.is_fallback(&id));
+        assert!(!path.exists(), "nothing should be written in cleartext");
+    }
+
+    #[test]
+    fn a_recovered_store_promotes_the_key_out_of_cleartext() {
+        // User installs without a keyring, later installs one. The next save
+        // must move the secret into the store and remove the cleartext copy.
+        let (file, path) = temp_file_vault();
+        let file: SharedVault = Arc::new(file);
+        let down = FallbackVault::new(Arc::new(MemoryVault::failing("down")), file.clone());
+        let id = CredentialId::stt("deepgram");
+        down.write(&id, "dg-key").unwrap();
+        assert!(path.exists());
+
+        let store = Arc::new(MemoryVault::new());
+        let up = FallbackVault::new(store.clone(), file.clone());
+        up.write(&id, "dg-key").unwrap();
+
+        assert_eq!(store.read(&id).unwrap(), Some("dg-key".to_string()));
+        assert_eq!(
+            file.read(&id).unwrap(),
+            None,
+            "cleartext copy must be dropped"
+        );
+        assert!(!up.is_fallback(&id));
+    }
+
+    #[test]
+    fn a_key_saved_while_the_store_was_down_is_still_readable_later() {
+        // The store comes back but has no entry; the fallback copy must still
+        // resolve, or the user's dictation breaks for no visible reason.
+        let (file, _) = temp_file_vault();
+        let file: SharedVault = Arc::new(file);
+        let id = CredentialId::stt("deepgram");
+        FallbackVault::new(Arc::new(MemoryVault::failing("down")), file.clone())
+            .write(&id, "dg-key")
+            .unwrap();
+
+        let recovered = FallbackVault::new(Arc::new(MemoryVault::new()), file);
+        assert_eq!(recovered.read(&id).unwrap(), Some("dg-key".to_string()));
+    }
+
+    #[test]
+    fn an_unreadable_store_with_no_fallback_copy_still_reports_the_error() {
+        // Must not be laundered into "no key set" — that is the misleading
+        // state the UI work was about.
+        let (file, _) = temp_file_vault();
+        let vault = FallbackVault::new(
+            Arc::new(MemoryVault::failing("keychain is locked")),
+            Arc::new(file),
+        );
+        assert!(vault.read(&CredentialId::stt("deepgram")).is_err());
+    }
+
+    #[test]
+    fn delete_removes_the_key_from_both_stores() {
+        let store = Arc::new(MemoryVault::new());
+        let (file, _) = temp_file_vault();
+        let file: SharedVault = Arc::new(file);
+        let id = CredentialId::llm("groq");
+        store.write(&id, "in-store").unwrap();
+        file.write(&id, "in-file").unwrap();
+
+        FallbackVault::new(store.clone(), file.clone())
+            .delete(&id)
+            .unwrap();
+
+        assert_eq!(store.read(&id).unwrap(), None);
+        assert_eq!(
+            file.read(&id).unwrap(),
+            None,
+            "a removed key must not survive anywhere"
         );
     }
 

@@ -23,6 +23,13 @@ export interface ApiKeyField {
    * this as "no key" is how a user ends up overwriting a working credential.
    */
   isUnreadable: boolean
+  /**
+   * The key is saved, but in the cleartext fallback because the OS credential
+   * store was unavailable. Must be visible: storing a secret in the clear
+   * without telling the user is worse than the plaintext config we replaced,
+   * because it is invisible.
+   */
+  isUnencrypted: boolean
   onChange: (next: string) => void
   /** Drop the saved key. Takes effect on Save, like every other setting. */
   clear: () => void
@@ -39,7 +46,7 @@ export function useApiKeyField(namespace: CredentialNamespace): ApiKeyField {
   const draft = useAppStore((s) => s.keyDrafts[namespace])
   const setKeyDraft = useAppStore((s) => s.setKeyDraft)
   const presence = useAppStore((s) => s.credentialStatus[namespace])
-  const savedInVault = presence === 'saved'
+  const savedInVault = presence === 'saved' || presence === 'saved_unencrypted'
   const unreadable = presence === 'unreadable'
 
   const onChange = useCallback(
@@ -57,6 +64,7 @@ export function useApiKeyField(namespace: CredentialNamespace): ApiKeyField {
     value: draft ?? '',
     hasSavedKey,
     isUnreadable: unreadable && draft === null,
+    isUnencrypted: presence === 'saved_unencrypted',
     onChange,
     clear,
     // Still testable when the store is unreadable: the probe goes through the

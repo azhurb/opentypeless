@@ -39,7 +39,7 @@ export type CredentialNamespace = 'stt' | 'llm'
  * `missing`: rendering it as "no key" invites the user to retype or remove a
  * credential that is actually fine.
  */
-export type KeyPresence = 'saved' | 'missing' | 'unreadable'
+export type KeyPresence = 'saved' | 'saved_unencrypted' | 'missing' | 'unreadable'
 
 export interface CredentialStatus {
   stt: KeyPresence

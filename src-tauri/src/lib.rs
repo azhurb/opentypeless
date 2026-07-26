@@ -200,16 +200,20 @@ async fn update_config(
 
 /// Whether one provider has a key, as far as we could tell.
 ///
-/// Three states, not two. `Unreadable` exists because reporting a vault we
+/// Four states, not two. `Unreadable` exists because reporting a vault we
 /// could not read as `Missing` is actively dangerous: the pane would render an
 /// empty field, the user would conclude their key had vanished, and retyping it
 /// — or hitting Remove — overwrites a credential that was perfectly fine. On
 /// macOS this is a button press away, since declining a Keychain prompt fails
 /// the read.
 #[derive(serde::Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 enum KeyPresence {
     Saved,
+    /// Saved, but in the cleartext fallback because the OS credential store was
+    /// unavailable. Surfaced so the user is never storing a secret in the clear
+    /// without being told.
+    SavedUnencrypted,
     Missing,
     Unreadable,
 }
@@ -233,7 +237,13 @@ async fn get_credential_status(
     // Deliberately not an `Err`: one unreadable key should degrade that one
     // field, not fail the whole Settings pane.
     let presence = |id: credentials::CredentialId| match vault.read(&id) {
-        Ok(Some(key)) if !key.is_empty() => KeyPresence::Saved,
+        Ok(Some(key)) if !key.is_empty() => {
+            if vault.is_fallback(&id) {
+                KeyPresence::SavedUnencrypted
+            } else {
+                KeyPresence::Saved
+            }
+        }
         Ok(_) => KeyPresence::Missing,
         Err(e) => {
             tracing::warn!("vault read failed for {}: {:#}", id.account(), e);
@@ -1273,8 +1283,20 @@ pub fn run() {
             // "Allow" button on a Keychain prompt grants a single access, so
             // without this a user who did not pick "Always Allow" was
             // re-prompted on every dictation.
+            //
+            // The fallback under it is what keeps the credential store from
+            // ever being the reason the app stops working: on a Linux box with
+            // no Secret Service provider, `keyring` cannot save a key at all,
+            // and without this a fresh install there would be unusable. Keys
+            // only land in the cleartext file when the store refuses them, and
+            // the Settings pane says so when they do.
             let vault: credentials::SharedVault = Arc::new(credentials::CachingVault::new(
-                Arc::new(credentials::SystemCredentialVault::new()),
+                Arc::new(credentials::FallbackVault::new(
+                    Arc::new(credentials::SystemCredentialVault::new()),
+                    Arc::new(credentials::FileVault::new(
+                        data_dir.join("credentials.json"),
+                    )),
+                )),
             ));
             let config_manager = storage::ConfigManager::new(app_handle.clone(), vault.clone());
             let history_store = storage::HistoryStore::new(db_path.clone())

@@ -95,6 +95,12 @@ export function SttPane() {
             {t('settings.apiKeyUnreadableHint')}
           </p>
         )}
+        {apiKey.isUnencrypted && (
+          <p className="flex items-start gap-1 text-[12px] text-warning mt-2">
+            <XCircle size={13} className="flex-shrink-0 mt-0.5" />
+            {t('settings.apiKeyUnencrypted')}
+          </p>
+        )}
         <div className="flex items-center justify-between gap-3 mt-1.5">
           <p className="text-[11px] text-text-tertiary">{t('settings.storedLocally')}</p>
           {apiKey.hasSavedKey && (
