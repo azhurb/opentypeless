@@ -383,11 +383,10 @@ impl DictionaryStore {
             );",
         )?;
 
-        let version: i32 = conn.query_row(
-            "SELECT user_version FROM pragma_user_version",
-            [],
-            |r| r.get(0),
-        )?;
+        let version: i32 =
+            conn.query_row("SELECT user_version FROM pragma_user_version", [], |r| {
+                r.get(0)
+            })?;
 
         if version < 1 {
             conn.execute_batch(
@@ -606,7 +605,10 @@ mod dictionary_tests {
         assert_eq!(entry.source, "user_edits");
         assert_eq!(entry.observed_source.as_deref(), Some("Vladislav"));
         assert_eq!(entry.frequency_used, 1);
-        assert!(entry.last_used.is_some(), "add_learned must stamp last_used");
+        assert!(
+            entry.last_used.is_some(),
+            "add_learned must stamp last_used"
+        );
     }
 
     #[tokio::test]
@@ -646,7 +648,10 @@ mod dictionary_tests {
         assert_eq!(entries.len(), 1);
         let e = &entries[0];
         assert_eq!(e.word, "Vlad");
-        assert_eq!(e.source, "manual", "legacy rows must default to source=manual");
+        assert_eq!(
+            e.source, "manual",
+            "legacy rows must default to source=manual"
+        );
         assert!(e.observed_source.is_none());
         assert_eq!(e.frequency_used, 0);
         assert!(e.last_used.is_none());

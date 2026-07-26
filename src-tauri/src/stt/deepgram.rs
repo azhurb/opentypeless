@@ -88,7 +88,6 @@ impl DeepgramProvider {
     pub fn new() -> Self {
         Self { ws: None }
     }
-
 }
 
 #[async_trait]

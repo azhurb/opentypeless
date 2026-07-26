@@ -90,9 +90,7 @@ describe('PermissionsStep (macOS)', () => {
     const openButtons = screen.getAllByText('permissions.openSettings')
     fireEvent.click(openButtons[0])
     await waitFor(() => {
-      expect(openUrl).toHaveBeenCalledWith(
-        expect.stringMatching(/Privacy_Microphone/),
-      )
+      expect(openUrl).toHaveBeenCalledWith(expect.stringMatching(/Privacy_Microphone/))
       expect(requestMic).not.toHaveBeenCalled()
     })
   })
@@ -129,9 +127,7 @@ describe('PermissionsStep (macOS)', () => {
     // The AX card has two buttons: Grant and Open Settings.
     fireEvent.click(screen.getByText('permissions.openSettings'))
     await waitFor(() =>
-      expect(openUrl).toHaveBeenCalledWith(
-        expect.stringMatching(/Privacy_Accessibility/),
-      ),
+      expect(openUrl).toHaveBeenCalledWith(expect.stringMatching(/Privacy_Accessibility/)),
     )
   })
 })

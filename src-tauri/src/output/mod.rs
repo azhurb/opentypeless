@@ -1,5 +1,5 @@
-pub mod clipboard;
 mod chunker;
+pub mod clipboard;
 
 use anyhow::Result;
 use tauri::AppHandle;

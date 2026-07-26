@@ -734,7 +734,11 @@ fn configure_capsule_collection_behavior(ns_window: *mut std::ffi::c_void) {
         set_u64(ns_window, set_style, style | NONACTIVATING_PANEL);
 
         let collection = get_u64(ns_window, get_collection);
-        set_u64(ns_window, set_collection, collection | FULL_SCREEN_AUXILIARY);
+        set_u64(
+            ns_window,
+            set_collection,
+            collection | FULL_SCREEN_AUXILIARY,
+        );
 
         set_i64(ns_window, set_level, POPUP_MENU_LEVEL);
     }
@@ -1369,7 +1373,9 @@ pub fn run() {
             //      which is consistent with the tray-driven UX.
             #[cfg(target_os = "macos")]
             {
-                let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
+                let _ = app
+                    .handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory);
                 if let Some(capsule) = app.get_webview_window("capsule") {
                     if let Ok(ns_window) = capsule.ns_window() {
                         configure_capsule_collection_behavior(ns_window);

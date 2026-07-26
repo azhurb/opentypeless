@@ -69,8 +69,8 @@ fn main() -> anyhow::Result<()> {
     eprintln!("Focus the target window now. Typing in {} ms...", delay_ms);
     sleep(Duration::from_millis(delay_ms));
 
-    let mut enigo = Enigo::new(&Settings::default())
-        .map_err(|e| anyhow::anyhow!("Enigo init: {:?}", e))?;
+    let mut enigo =
+        Enigo::new(&Settings::default()).map_err(|e| anyhow::anyhow!("Enigo init: {:?}", e))?;
     type_string(&mut enigo, &payload)?;
 
     eprintln!("Done. If nothing appeared in the target window on macOS, the example binary");

@@ -176,14 +176,8 @@ async fn run<F>(
     }
     if let Some(cur_value) = last_changed {
         tracing::debug!("correction: watch timeout reached, attempting emit on last-seen value");
-        if let Some(sugg) = try_build_suggestion(
-            &baseline.value,
-            &cur_value,
-            &typed_text,
-            &dictionary,
-            None,
-        )
-        .await
+        if let Some(sugg) =
+            try_build_suggestion(&baseline.value, &cur_value, &typed_text, &dictionary, None).await
         {
             tracing::debug!(
                 "correction: emitting suggestion row_id={} (timeout path)",
@@ -420,14 +414,9 @@ mod tests {
         ]);
         let dict = temp_store();
         let (tx, rx) = std::sync::mpsc::channel();
-        let _h = spawn(
-            field,
-            dict.clone(),
-            "Hello Timmy ".to_string(),
-            move |s| {
-                let _ = tx.send(s);
-            },
-        );
+        let _h = spawn(field, dict.clone(), "Hello Timmy ".to_string(), move |s| {
+            let _ = tx.send(s);
+        });
         let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(500)))
             .await
             .unwrap()
@@ -538,10 +527,10 @@ mod tests {
         // First AX read missed the typed text (race with enigo). Subsequent
         // reads see the dictation present.
         let field = FakeField::new(vec![
-            stale_snap("Hi I am "),                     // bad: typed_span_found=false
-            mk("Hi I am Philip", "Philip"),             // good: snapshot retry succeeds
-            mk("Hi I am Philipp", "Philip"),            // user edited
-            mk("Hi I am Philipp", "Philip"),            // stable
+            stale_snap("Hi I am "),          // bad: typed_span_found=false
+            mk("Hi I am Philip", "Philip"),  // good: snapshot retry succeeds
+            mk("Hi I am Philipp", "Philip"), // user edited
+            mk("Hi I am Philipp", "Philip"), // stable
         ]);
         let dict = temp_store();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -561,9 +550,9 @@ mod tests {
         // baseline anchors: prefix="Hi ", suffix=" bye"
         // user edits the SUFFIX context (not the dictation) → anchors never realign
         let field = FakeField::new(vec![
-            mk("Hi Philip bye", "Philip"),         // baseline
-            mk("Hi Philip later", "Philip"),       // user mangled the suffix
-            mk("Hi Philip later", "Philip"),       // stable
+            mk("Hi Philip bye", "Philip"),   // baseline
+            mk("Hi Philip later", "Philip"), // user mangled the suffix
+            mk("Hi Philip later", "Philip"), // stable
         ]);
         let dict = temp_store();
         let (tx, rx) = std::sync::mpsc::channel::<CorrectionSuggestion>();
@@ -593,9 +582,9 @@ mod tests {
         //     → single substitution bye → Vladimir.
         //   - Classifier accepts (capital V, len 8).
         let field = FakeField::new(vec![
-            mk("Hi Bob bye", "Bob"),         // baseline
-            mk("Hi Bob Vladimir", "Bob"),    // user edited the suffix
-            mk("Hi Bob Vladimir", "Bob"),    // stable; loop runs until WATCH_DURATION
+            mk("Hi Bob bye", "Bob"),      // baseline
+            mk("Hi Bob Vladimir", "Bob"), // user edited the suffix
+            mk("Hi Bob Vladimir", "Bob"), // stable; loop runs until WATCH_DURATION
         ]);
         let dict = temp_store();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -603,10 +592,11 @@ mod tests {
             let _ = tx.send(s);
         });
         // Wait past the test-mode WATCH_DURATION_MS (2000ms).
-        let got = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(2_500)))
-            .await
-            .unwrap()
-            .expect("timeout-emit must fire on degenerate path");
+        let got =
+            tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(2_500)))
+                .await
+                .unwrap()
+                .expect("timeout-emit must fire on degenerate path");
         assert_eq!(got.old, "bye");
         assert_eq!(got.new, "Vladimir");
     }

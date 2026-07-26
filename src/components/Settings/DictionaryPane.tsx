@@ -49,9 +49,7 @@ export function DictionaryPane() {
             id="learn-from-corrections"
             type="checkbox"
             checked={config.learn_from_corrections_enabled}
-            onChange={(e) =>
-              updateConfig({ learn_from_corrections_enabled: e.target.checked })
-            }
+            onChange={(e) => updateConfig({ learn_from_corrections_enabled: e.target.checked })}
             className="mt-0.5"
           />
           <label htmlFor="learn-from-corrections" className="flex-1">

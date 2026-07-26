@@ -15,7 +15,10 @@ pub enum ChunkPlan {
 enum ChunkLimit {
     None,
     Chars(usize),
-    CharsAndNewlines { max_chars: usize, max_newlines: usize },
+    CharsAndNewlines {
+        max_chars: usize,
+        max_newlines: usize,
+    },
 }
 
 /// Decide how to split `text` based on the focused app and any coding CLI
@@ -24,9 +27,10 @@ pub fn plan_chunks(text: String, app: &AppContext, detected: Option<DetectedCli>
     let chunks = match chunk_limit_for(app, detected) {
         ChunkLimit::None => return ChunkPlan::Single(text),
         ChunkLimit::Chars(max) => chunk_by_chars(&text, max, None),
-        ChunkLimit::CharsAndNewlines { max_chars, max_newlines } => {
-            chunk_by_chars(&text, max_chars, Some(max_newlines))
-        }
+        ChunkLimit::CharsAndNewlines {
+            max_chars,
+            max_newlines,
+        } => chunk_by_chars(&text, max_chars, Some(max_newlines)),
     };
     match chunks.len() {
         0 => ChunkPlan::Single(String::new()),
@@ -82,7 +86,10 @@ fn chunk_limit_for(app: &AppContext, detected: Option<DetectedCli>) -> ChunkLimi
 /// newlines or >800 chars; Codex and Gemini tolerate up to ~1000 chars.
 fn cli_chunk_limit(kind: CliKind) -> ChunkLimit {
     match kind {
-        CliKind::Claude => ChunkLimit::CharsAndNewlines { max_chars: 800, max_newlines: 2 },
+        CliKind::Claude => ChunkLimit::CharsAndNewlines {
+            max_chars: 800,
+            max_newlines: 2,
+        },
         CliKind::Codex | CliKind::Gemini => ChunkLimit::Chars(1000),
     }
 }
