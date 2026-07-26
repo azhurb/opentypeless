@@ -142,7 +142,7 @@ fn chunk_by_chars(text: &str, max_chars: usize, max_newlines: Option<usize>) -> 
     let mut current_newlines: usize = 0;
 
     let newline_room = |current_nls: usize, add_nls: usize| -> bool {
-        max_newlines.map_or(true, |m| current_nls + add_nls <= m)
+        max_newlines.is_none_or(|m| current_nls + add_nls <= m)
     };
 
     for line in text.split_inclusive('\n') {

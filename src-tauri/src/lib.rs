@@ -672,6 +672,7 @@ async fn resume_hotkey(
 ///   3. Raise the window level to `NSPopUpMenuWindowLevel` (101). Tauri's
 ///      `alwaysOnTop` only sets `NSFloatingWindowLevel` (3), which sits below
 ///      a fullscreen app's content, so the capsule would be hidden behind it.
+///
 /// All read-modify-write so we don't clobber flags Tauri/tao already set.
 /// Safe because `NSPanel` inherits from `NSWindow` and adds no extra ivars,
 /// so the existing `NSWindow` allocation has the right layout.
@@ -703,16 +704,16 @@ fn configure_capsule_collection_behavior(ns_window: *mut std::ffi::c_void) {
 
     unsafe {
         // Swap the class to NSPanel so the nonactivating-panel style takes effect.
-        let panel_class = objc_getClass(b"NSPanel\0".as_ptr() as *const c_char);
+        let panel_class = objc_getClass(c"NSPanel".as_ptr());
         if !panel_class.is_null() {
             object_setClass(ns_window, panel_class);
         }
 
-        let get_style = sel_registerName(b"styleMask\0".as_ptr() as *const c_char);
-        let set_style = sel_registerName(b"setStyleMask:\0".as_ptr() as *const c_char);
-        let get_collection = sel_registerName(b"collectionBehavior\0".as_ptr() as *const c_char);
-        let set_collection = sel_registerName(b"setCollectionBehavior:\0".as_ptr() as *const c_char);
-        let set_level = sel_registerName(b"setLevel:\0".as_ptr() as *const c_char);
+        let get_style = sel_registerName(c"styleMask".as_ptr());
+        let set_style = sel_registerName(c"setStyleMask:".as_ptr());
+        let get_collection = sel_registerName(c"collectionBehavior".as_ptr());
+        let set_collection = sel_registerName(c"setCollectionBehavior:".as_ptr());
+        let set_level = sel_registerName(c"setLevel:".as_ptr());
         if get_style.is_null()
             || set_style.is_null()
             || get_collection.is_null()

@@ -57,6 +57,12 @@ impl MacOsFocusedField {
     }
 }
 
+impl Default for MacOsFocusedField {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 unsafe fn cf_string_to_rust(cf: *mut c_void) -> Option<String> {
     if cf.is_null() {
         return None;
@@ -66,7 +72,7 @@ unsafe fn cf_string_to_rust(cf: *mut c_void) -> Option<String> {
     }
     let len_chars = CFStringGetLength(cf);
     // Worst-case UTF-8 bytes ≈ 4 * UTF-16 code units + NUL terminator.
-    let buf_size = (len_chars as isize * 4 + 1).max(16);
+    let buf_size = (len_chars * 4 + 1).max(16);
     let mut buf: Vec<u8> = vec![0u8; buf_size as usize];
     if CFStringGetCString(cf, buf.as_mut_ptr(), buf_size, K_CF_STRING_ENCODING_UTF8) == 0 {
         return None;

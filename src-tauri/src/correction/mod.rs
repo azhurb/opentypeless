@@ -277,7 +277,6 @@ async fn snapshot_with_retry(
     cancelled: &Arc<AtomicBool>,
 ) -> Option<FieldSnapshot> {
     let started = std::time::Instant::now();
-    let mut last: Option<FieldSnapshot> = None;
     loop {
         if cancelled.load(Ordering::Relaxed) {
             return None;
@@ -286,12 +285,11 @@ async fn snapshot_with_retry(
         if snap.is_secure || snap.typed_end > snap.typed_start {
             return Some(snap);
         }
-        last = Some(snap);
         if started.elapsed() >= Duration::from_millis(SNAPSHOT_RETRY_BUDGET_MS) {
             tracing::debug!(
                 "correction: snapshot retry budget exhausted, proceeding with degenerate baseline"
             );
-            return last;
+            return Some(snap);
         }
         tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS / 2 + 1)).await;
     }

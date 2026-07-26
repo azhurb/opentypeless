@@ -69,7 +69,7 @@ pub fn is_dictionary_candidate(
         return false;
     }
     let lower = new.to_lowercase();
-    if COMMON_WORDS.iter().any(|w| *w == lower.as_str()) {
+    if COMMON_WORDS.contains(&lower.as_str()) {
         return false;
     }
     if existing_dictionary_lower.iter().any(|w| w == &lower) {
