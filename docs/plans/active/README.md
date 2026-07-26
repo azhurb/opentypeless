@@ -7,4 +7,5 @@ Lifecycle: when work lands, move the file to `../completed/` if it is useful his
 ## Current Active Plans
 
 - [Dictation startup latency](dictation-startup-latency.md) — close the dead window between hotkey press and first audio sample; fixes #1 (native macOS app detection) and #2 (audio-first reorder) are landed and in user testing; follow-ups #3–#5 deferred.
-- [Upstream adoption review](upstream-adoption.md) — what the 144 upstream commits since the 2026-04-13 fork point contain, and the ranked shortlist worth pulling in (nothing adopted yet). Recommends cutting 0.5.0 before any adoption starts.
+- [Upstream adoption review](upstream-adoption.md) — what the 144 upstream commits since the 2026-04-13 fork point contain, and the ranked shortlist worth pulling in. 0.5.0 is cut and the `color-scheme` item is landed (#26); the rest is open.
+- [Provider retry + pooled HTTP client](provider-retry.md) — handoff brief for the next piece of work: retry with backoff where it is safe (streaming `connect`, one-shot uploads and polish — not mid-stream audio), plus one pooled `reqwest::Client`. Nothing implemented yet.
