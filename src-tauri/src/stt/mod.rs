@@ -2,11 +2,90 @@ pub mod assemblyai;
 pub mod deepgram;
 pub mod whisper_compat;
 
+use std::time::Duration;
+
 use anyhow::Result;
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio_tungstenite::tungstenite::Message;
 
 use whisper_compat::{WhisperCompatConfig, WhisperCompatProvider};
+
+/// The WebSocket stream both streaming providers hold.
+pub(crate) type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// How long to wait for the next message while draining. An idle gap this long
+/// ends the drain.
+const DRAIN_IDLE_MS: u64 = 150;
+
+/// Approximate ceiling on the whole drain, however much the provider sends.
+/// Checked between reads, so the real bound is this plus one idle window.
+const DRAIN_TOTAL_MS: u64 = 600;
+
+/// Read whatever a streaming provider flushes after being told to finish.
+///
+/// Both streaming providers used to send their close signal and shut the socket
+/// in the same breath, so anything the server sent *in response* was dropped —
+/// for Deepgram the results still pending at `CloseStream`, for AssemblyAI the
+/// formatted version of the final turn (the only kind that becomes a `Final`).
+/// Since the pipeline accumulates text from `Final` events only, that silently
+/// cost the tail of an utterance, and all of it for a dictation short enough to
+/// be one turn.
+///
+/// Bounded twice on purpose: this sits between the user releasing the hotkey and
+/// text appearing, so a fixed wait would be a latency regression on every
+/// dictation. A provider that answers promptly — the expected case — costs only
+/// its own flush time, and one that says nothing costs `DRAIN_IDLE_MS`.
+///
+/// `TranscriptEvent::SpeechEnded` is the stop signal: AssemblyAI's `Termination`
+/// maps to it, which is the server saying it has nothing left to send.
+pub(crate) async fn drain_final_text<P>(ws: &mut WsStream, parse: P) -> DisconnectResult
+where
+    P: Fn(&str) -> Result<Option<TranscriptEvent>>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(DRAIN_TOTAL_MS);
+    let idle = Duration::from_millis(DRAIN_IDLE_MS);
+    let mut text = String::new();
+    let mut language = None;
+
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(idle, ws.next()).await {
+            // Idle gap: the provider has stopped talking.
+            Err(_) => break,
+            // Stream ended, socket closed, or errored — nothing more is coming.
+            Ok(None) | Ok(Some(Ok(Message::Close(_)))) | Ok(Some(Err(_))) => break,
+            Ok(Some(Ok(Message::Text(raw)))) => match parse(&raw) {
+                Ok(Some(TranscriptEvent::Final {
+                    text: chunk,
+                    language: detected,
+                    ..
+                })) => {
+                    if !text.is_empty() {
+                        text.push(' ');
+                    }
+                    text.push_str(&chunk);
+                    if detected.is_some() {
+                        language = detected;
+                    }
+                }
+                Ok(Some(TranscriptEvent::SpeechEnded)) => break,
+                // Partials are superseded by the final that follows, and a parse
+                // error is moot with the session already ending.
+                _ => {}
+            },
+            // Metadata, pings, binary frames.
+            Ok(Some(Ok(_))) => {}
+        }
+    }
+
+    if text.is_empty() {
+        None
+    } else {
+        Some((text, language))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SttConfig {

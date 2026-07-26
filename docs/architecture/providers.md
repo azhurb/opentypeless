@@ -85,6 +85,16 @@ Match arms currently registered in `stt::create_provider`:
 
 `openai-whisper` is the exception: OpenAI bills every `/audio/transcriptions` call, so the upload probe charged the user to verify their own key — a real annoyance in a BYOK app. It now reads `GET /v1/models/whisper-1` instead, which proves the key is accepted for free. The other Whisper-compatible providers keep the upload probe. One consequence worth knowing: the benchmark number shown for `openai-whisper` is now a model-read round-trip rather than a transcription round-trip, so it is not comparable with the other Whisper-compatible providers' figures. **Needs confirmation**: whether GLM-ASR, Groq and SiliconFlow expose an equivalent per-model endpoint, and whether their transcription calls are billed the same way — if both hold, they should move to the same probe.
 
+### Draining the close of a streaming session
+
+`disconnect()` on a streaming provider sends the provider's finish signal and then **reads what comes back** before closing the socket, returning any flushed text through the existing `DisconnectResult` channel (the same one file-based providers use). `stt::drain_final_text` implements the loop; each provider passes its own message parser.
+
+This exists because both providers used to send the signal and shut the socket in the same breath, dropping whatever the server sent in response: for Deepgram the results still pending at `CloseStream`, for AssemblyAI the formatted version of the turn in progress. Since the pipeline accumulates from `Final` events only, that cost the tail of an utterance — and all of it for a dictation short enough to be a single turn.
+
+The drain is bounded twice, because it sits between the user releasing the hotkey and text appearing: a `DRAIN_IDLE_MS` (150 ms) gap with nothing received ends it, and `DRAIN_TOTAL_MS` (600 ms, checked between reads) caps it even if the provider keeps sending. A provider that answers promptly costs only its own flush time. `TranscriptEvent::SpeechEnded` is the stop signal — AssemblyAI's `Termination` maps to it, meaning the server has nothing left; it is the one place that variant is load-bearing.
+
+**Needs confirmation** — the timing constants and the duplication question both want one live dictation per provider to settle: whether 150 ms is long enough for the flush to arrive, and whether AssemblyAI can re-send a formatted turn that was already delivered as a `Final` during the session (per protocol it finalizes only the turn in progress, so the drain does not de-duplicate). The symptom to watch for is a duplicated last sentence rather than a missing one.
+
 ### Deepgram result parsing
 
 `deepgram::parse_result_message` turns one `Results` message into a `TranscriptEvent`, kept pure so the protocol handling is unit-tested without a socket. Empty transcripts (keep-alives, metadata, silent segments) yield `None`; `is_final: false` yields `Partial`; a finalized segment yields `Final` with confidence and `channel.detected_language`.

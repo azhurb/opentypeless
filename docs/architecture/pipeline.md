@@ -27,7 +27,7 @@ Background: audio capture used to be the *last* step of setup. With streaming ST
 
 1. State moves `Recording → Transcribing`.
 2. If selected-text mode is enabled, the pipeline waits `SELECTED_TEXT_CAPTURE_DELAY_MS` so hotkey modifiers can be released, then simulates Cmd/Ctrl+C and restores clipboard contents.
-3. Audio capture stops; pipeline waits for STT finalization.
+3. Audio capture stops; pipeline waits for STT finalization. Closing the audio channel is what drives `disconnect()`, and for streaming providers that call now briefly drains whatever the provider flushes in response to its finish signal — see [Providers → Draining the close of a streaming session](providers.md#draining-the-close-of-a-streaming-session). Text recovered there arrives through the same `DisconnectResult` branch that file-based providers use.
 4. If polish is enabled, final text is sent to the LLM provider. A transient failure of the request itself is retried (see [Transient Failure Retry](#transient-failure-retry)).
 5. Output runs (clipboard paste — see [Output Path](#output-path)).
 6. History is stored — **only if `history_enabled`**, re-read here rather than taken from the recording-start config snapshot so a mid-dictation opt-out is honored. When it is off the insert is skipped and only the retention prune runs. See [Storage → Retention](storage.md#retention).
