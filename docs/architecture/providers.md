@@ -69,6 +69,7 @@ The multi-element selection in the UI is primarily a hint to the **polish prompt
 
 Match arms currently registered in `stt::create_provider`:
 
+- `deepgram`
 - `assemblyai`
 - `glm-asr`
 - `openai-whisper`
@@ -84,9 +85,13 @@ Match arms currently registered in `stt::create_provider`:
 
 `openai-whisper` is the exception: OpenAI bills every `/audio/transcriptions` call, so the upload probe charged the user to verify their own key — a real annoyance in a BYOK app. It now reads `GET /v1/models/whisper-1` instead, which proves the key is accepted for free. The other Whisper-compatible providers keep the upload probe. One consequence worth knowing: the benchmark number shown for `openai-whisper` is now a model-read round-trip rather than a transcription round-trip, so it is not comparable with the other Whisper-compatible providers' figures. **Needs confirmation**: whether GLM-ASR, Groq and SiliconFlow expose an equivalent per-model endpoint, and whether their transcription calls are billed the same way — if both hold, they should move to the same probe.
 
-### Mismatches with the frontend list
+### Deepgram result parsing
 
-`src/lib/constants.ts` and `src/stores/appStore.ts` also expose `deepgram` (label `Deepgram Nova-3`). Connection-test, benchmark, and pre-warm code in `src-tauri/src/lib.rs` and `src-tauri/src/pipeline.rs` recognise `deepgram`, but the streaming `create_provider` factory does not — selecting it currently falls through to the GLM-ASR default. **Needs confirmation**: whether this is an in-progress integration or a regression. The frontend list and the factory should match.
+`deepgram::parse_result_message` turns one `Results` message into a `TranscriptEvent`, kept pure so the protocol handling is unit-tested without a socket. Empty transcripts (keep-alives, metadata, silent segments) yield `None`; `is_final: false` yields `Partial`; a finalized segment yields `Final` with confidence and `channel.detected_language`.
+
+A finalized segment yields its text **even when `speech_final` is set**. Deepgram marks end-of-speech on the message that also carries the last words of the utterance, so treating `speech_final` as a pure signal drops them — and nothing downstream notices, because the pipeline ignores `TranscriptEvent::SpeechEnded` (`pipeline.rs`, `_ => {}`) and drives finalization from the audio channel closing. That was live in the provider until the factory arm was wired up; there is a regression test on it.
+
+**Resolved** (was a `Needs confirmation` on the frontend/factory mismatch): `src/lib/constants.ts` and `src/stores/appStore.ts` expose `deepgram` (label `Deepgram Nova-3`), and the connection-test, benchmark and pre-warm paths in `lib.rs` / `pipeline.rs` have always recognised it — but `stt::create_provider` had no arm for it since the initial commit, so selecting Deepgram silently fell through to the GLM-ASR default and authenticated a GLM-ASR request with a Deepgram key. The arm now exists. `DeepgramProvider` was dead code for that whole period, so its end-to-end behavior is **unverified against the live API** — the parsing is unit-tested, but nothing here has been exercised with a real Deepgram key.
 
 ## LLM Providers
 
