@@ -1,6 +1,50 @@
 # Provider Retry + Pooled HTTP Client
 
-Written 2026-07-26 as a handoff brief. Nothing implemented yet.
+Written 2026-07-26 as a handoff brief; **landed the same day**. Kept as history for the
+safety analysis below, which is the reasoning behind the retry boundaries now documented in
+[`architecture/providers.md`](../../architecture/providers.md#retry-policy).
+
+## Outcome
+
+Everything in scope shipped: retry on streaming `connect`, the `whisper_compat` upload and
+`LlmProvider::polish`; one pooled `reqwest::Client`; the `da7b5fd` connection-test fold-in;
+classifier unit tests. Three notes where the implementation diverged from or corrected the
+brief:
+
+- **The brief was wrong about the pooled client's blast radius.** `pipeline.rs` already passed
+  `Some(shared_client)` to both factories, so the hot-path providers were pooled already; the
+  `Client::new()` calls at `llm/openai.rs:21` and `stt/whisper_compat.rs:215` were unreached
+  fallback constructors. The real gap was the nine command sites in `lib.rs`. Both factories
+  now take the client by value instead of `Option`, so the bypass can't come back.
+- **Retry lives inside each provider's `connect`, not at the call site.** Wrapping the call
+  site in `pipeline.rs` would need `&mut provider` inside a repeatedly-called closure; putting
+  the helper directly on the network call is simpler and keeps `whisper_compat::connect` (a
+  local no-op) out of it.
+- **`polish` retries the request head only.** The brief listed `polish` as safely retryable,
+  which holds for `send()` plus the status check but not for the streamed body — chunks reach
+  the frontend callback as they arrive, so a retry after streaming began would duplicate
+  visible text.
+
+Backoff is 400 ms doubling to 800 ms rather than upstream's 1 s/2 s: retries are silent, so
+the budget is bounded by how long the capsule can sit in one state before reading as a hang.
+
+One thing the brief missed, found during implementation: **an attempt budget alone is unsafe**
+once timeouts are retryable. Provider requests carry a 60 s `reqwest` timeout, so 3 attempts
+could run ~180 s — past `pipeline::STT_FINALIZE_TIMEOUT_SECS` (120 s), at which point `stop()`
+abandons the wait and proceeds with empty accumulated text, i.e. exactly the lost dictation
+this work was meant to prevent. `polish` has no outer deadline at all. The helper therefore
+also carries a 10 s wall-clock budget: retry while failures are cheap, surface the error when
+they are not.
+
+Follow-ups, none blocking:
+
+- Honor `Retry-After` on 429 instead of using the fixed schedule.
+- Move the other Whisper-compatible providers off the upload probe if they expose a per-model
+  endpoint (see the `Needs confirmation` note in `architecture/providers.md`).
+- Revisit silent retries if field use shows them reading as a hang.
+- The manual "throttle a provider and confirm a dictation survives" check was **not** run —
+  it needs live provider keys. Covered indirectly by unit tests on the classifier, the
+  backoff loop, and both `HttpStatusError` construction sites.
 
 ## Goal
 
@@ -108,6 +152,6 @@ that rots silently.
 
 ## After this
 
-The next item on the [upstream adoption](upstream-adoption.md) list is the **keychain
+The next item on the [upstream adoption](../active/upstream-adoption.md) list is the **keychain
 migration** — API keys move out of plaintext `settings.json` into the OS credential vault.
 Highest-value remaining item; wants its own session.

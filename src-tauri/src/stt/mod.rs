@@ -66,15 +66,9 @@ pub trait SttProvider: Send + Sync {
     fn name(&self) -> &str;
 }
 
-pub fn create_provider(
-    provider_name: &str,
-    client: Option<reqwest::Client>,
-) -> Box<dyn SttProvider> {
+pub fn create_provider(provider_name: &str, client: reqwest::Client) -> Box<dyn SttProvider> {
     let make = |cfg: WhisperCompatConfig| -> Box<dyn SttProvider> {
-        match client {
-            Some(ref c) => Box::new(WhisperCompatProvider::with_client(cfg, c.clone())),
-            None => Box::new(WhisperCompatProvider::new(cfg)),
-        }
+        Box::new(WhisperCompatProvider::new(cfg, client.clone()))
     };
     match provider_name {
         "assemblyai" => Box::new(assemblyai::AssemblyAiProvider::new()),

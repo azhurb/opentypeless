@@ -198,7 +198,11 @@ pub struct PipelineHandle {
 }
 
 impl PipelineHandle {
-    pub fn new(app_handle: tauri::AppHandle) -> Self {
+    /// `shared_client` is the app-wide pooled `reqwest::Client`
+    /// (`crate::HttpClient`); the pipeline hands clones to the providers so a
+    /// dictation reuses warm connections instead of paying a TLS handshake per
+    /// utterance — which retries would otherwise multiply.
+    pub fn new(app_handle: tauri::AppHandle, shared_client: reqwest::Client) -> Self {
         Self {
             app_handle,
             state: Arc::new(AtomicU8::new(PipelineState::Idle.as_u8())),
@@ -214,7 +218,7 @@ impl PipelineHandle {
             preloaded_selected_text: Arc::new(Mutex::new(None)),
             recording_start: Arc::new(Mutex::new(None)),
             current_correction: Arc::new(Mutex::new(None)),
-            shared_client: reqwest::Client::new(),
+            shared_client,
             pipeline_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -551,7 +555,7 @@ impl PipelineHandle {
         };
 
         let mut provider =
-            stt::create_provider(&config_data.stt_provider, Some(self.shared_client.clone()));
+            stt::create_provider(&config_data.stt_provider, self.shared_client.clone());
         if let Err(e) = provider.connect(&stt_config).await {
             tracing::error!("STT connect failed: {}", e);
             let _ = self
@@ -764,8 +768,7 @@ impl PipelineHandle {
                 max_tokens: 4096,
                 temperature: 0.3,
             };
-            let provider =
-                llm::create_provider(&config.llm_provider, Some(self.shared_client.clone()));
+            let provider = llm::create_provider(&config.llm_provider, self.shared_client.clone());
             Some((llm_config, provider))
         } else {
             None
