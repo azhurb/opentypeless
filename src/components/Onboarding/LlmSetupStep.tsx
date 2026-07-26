@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { LLM_PROVIDERS, LLM_DEFAULT_CONFIG } from '../../lib/constants'
 import { testLlmConnection, fetchLlmModels } from '../../lib/tauri'
+import { useApiKeyField } from '../../hooks/useApiKeyField'
 import { CheckCircle2, XCircle, Loader2, RefreshCw } from 'lucide-react'
 
 export function LlmSetupStep() {
@@ -9,41 +10,47 @@ export function LlmSetupStep() {
   const updateConfig = useAppStore((s) => s.updateConfig)
   const llmTestStatus = useAppStore((s) => s.llmTestStatus)
   const setLlmTestStatus = useAppStore((s) => s.setLlmTestStatus)
+  const apiKey = useApiKeyField('llm')
 
   const [models, setModels] = useState<string[]>([])
   const [fetchingModels, setFetchingModels] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const doFetchModels = useCallback(async (apiKey: string, baseUrl: string) => {
-    if (!baseUrl) return
-    setFetchingModels(true)
-    try {
-      const list = await fetchLlmModels(apiKey, baseUrl)
-      setModels(list)
-    } catch {
-      setModels([])
-    } finally {
-      setFetchingModels(false)
-    }
-  }, [])
+  const doFetchModels = useCallback(
+    async (probeKey: string | null, provider: string, baseUrl: string) => {
+      if (!baseUrl) return
+      setFetchingModels(true)
+      try {
+        const list = await fetchLlmModels(probeKey, provider, baseUrl)
+        setModels(list)
+      } catch {
+        setModels([])
+      } finally {
+        setFetchingModels(false)
+      }
+    },
+    [],
+  )
 
-  // Auto-fetch when API key changes (debounced)
+  // Auto-fetch when the key changes (debounced). The key is a draft during
+  // onboarding — nothing is saved yet — so this watches the draft, not config.
+  const { probeKey, canTest } = apiKey
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (!config.llm_api_key || !config.llm_base_url) return
+    if (!canTest || !config.llm_base_url) return
     debounceRef.current = setTimeout(() => {
-      doFetchModels(config.llm_api_key, config.llm_base_url)
+      doFetchModels(probeKey, config.llm_provider, config.llm_base_url)
     }, 500)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [config.llm_api_key, config.llm_base_url, doFetchModels])
+  }, [probeKey, canTest, config.llm_provider, config.llm_base_url, doFetchModels])
 
   const handleTest = async () => {
     setLlmTestStatus('testing')
     try {
       const ok = await testLlmConnection(
-        config.llm_api_key,
+        apiKey.probeKey,
         config.llm_provider,
         config.llm_base_url,
         config.llm_model,
@@ -84,17 +91,17 @@ export function LlmSetupStep() {
         <div className="flex gap-2">
           <input
             type="password"
-            value={config.llm_api_key}
+            value={apiKey.value}
             onChange={(e) => {
-              updateConfig({ llm_api_key: e.target.value })
+              apiKey.onChange(e.target.value)
               setLlmTestStatus('idle')
             }}
-            placeholder="Enter API Key..."
+            placeholder={apiKey.hasSavedKey ? 'Saved in your system keychain' : 'Enter API Key...'}
             className="flex-1 px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
           />
           <button
             onClick={handleTest}
-            disabled={!config.llm_api_key || llmTestStatus === 'testing'}
+            disabled={!apiKey.canTest || llmTestStatus === 'testing'}
             className="px-4 py-2.5 bg-accent text-white rounded-[10px] text-[13px] border-none cursor-pointer hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
           >
             {llmTestStatus === 'testing' && <Loader2 size={14} className="animate-spin" />}
@@ -121,7 +128,7 @@ export function LlmSetupStep() {
             </datalist>
           </div>
           <button
-            onClick={() => doFetchModels(config.llm_api_key, config.llm_base_url)}
+            onClick={() => doFetchModels(apiKey.probeKey, config.llm_provider, config.llm_base_url)}
             disabled={fetchingModels || !config.llm_base_url}
             className="px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-secondary cursor-pointer hover:border-border-focus disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
             title="Fetch available models"

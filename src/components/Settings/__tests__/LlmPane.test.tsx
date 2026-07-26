@@ -17,6 +17,8 @@ vi.mock('react-i18next', () => ({
         'settings.baseUrl': 'Base URL',
         'settings.test': 'Test',
         'settings.enterApiKey': 'Enter API Key',
+        'settings.apiKeySaved': 'Key saved',
+        'settings.apiKeyRemove': 'Remove',
         'settings.connectionSuccess': 'Connection successful',
         'settings.connectionFailed': 'Connection failed',
         'settings.storedLocally': 'Stored locally',
@@ -37,7 +39,6 @@ vi.mock('react-i18next', () => ({
 const mockAppStore = {
   config: {
     llm_provider: 'openai' as string,
-    llm_api_key: '',
     llm_base_url: 'https://api.openai.com/v1',
     llm_model: 'gpt-4o-mini',
     polish_enabled: true,
@@ -46,6 +47,11 @@ const mockAppStore = {
     target_lang: 'en',
   },
   updateConfig: vi.fn(),
+  // API keys are not part of the config any more: `keyDrafts` is what the user
+  // is typing, `credentialStatus` is whether the vault already has one.
+  keyDrafts: { stt: null as string | null, llm: null as string | null },
+  setKeyDraft: vi.fn(),
+  credentialStatus: { stt: false, llm: false },
   llmTestStatus: 'idle' as 'idle' | 'testing' | 'success' | 'error',
   setLlmTestStatus: vi.fn(),
   llmLatencyMs: null as number | null,
@@ -68,7 +74,6 @@ describe('LlmPane', () => {
     // Reset mock store state
     mockAppStore.config = {
       llm_provider: 'openai',
-      llm_api_key: '',
       llm_base_url: 'https://api.openai.com/v1',
       llm_model: 'gpt-4o-mini',
       polish_enabled: true,
@@ -76,6 +81,8 @@ describe('LlmPane', () => {
       selected_text_enabled: false,
       target_lang: 'en',
     }
+    mockAppStore.keyDrafts = { stt: null, llm: null }
+    mockAppStore.credentialStatus = { stt: false, llm: false }
     mockAppStore.llmTestStatus = 'idle'
     mockAppStore.llmLatencyMs = null
     mockAppStore.llmModels = []
@@ -109,23 +116,42 @@ describe('LlmPane', () => {
   })
 
   describe('API Key input', () => {
-    it('renders API key input with current value', () => {
-      mockAppStore.config.llm_api_key = 'sk-test123'
+    it('renders the draft key as the input value', () => {
+      mockAppStore.keyDrafts.llm = 'sk-test123'
       render(<LlmPane />)
       const input = screen.getByPlaceholderText('Enter API Key') as HTMLInputElement
       expect(input.value).toBe('sk-test123')
       expect(input.type).toBe('password')
     })
 
-    it('updates config and resets test state when API key changes', () => {
+    it('stores a draft, never the config, when the key changes', () => {
       render(<LlmPane />)
       const input = screen.getByPlaceholderText('Enter API Key')
 
       fireEvent.change(input, { target: { value: 'sk-new-key' } })
 
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ llm_api_key: 'sk-new-key' })
+      expect(mockAppStore.setKeyDraft).toHaveBeenCalledWith('llm', 'sk-new-key')
+      // The secret must not reach the config object, which is serialized to
+      // settings.json and snapshotted for dirty detection.
+      expect(mockAppStore.updateConfig).not.toHaveBeenCalled()
       expect(mockAppStore.setLlmTestStatus).toHaveBeenCalledWith('idle')
       expect(mockAppStore.setLlmLatencyMs).toHaveBeenCalledWith(null)
+    })
+
+    it('shows the saved placeholder over an empty field when a key is in the vault', () => {
+      mockAppStore.credentialStatus.llm = true
+      render(<LlmPane />)
+      const input = screen.getByPlaceholderText('Key saved') as HTMLInputElement
+      expect(input.value).toBe('')
+    })
+
+    it('Remove stages an empty draft rather than deleting immediately', () => {
+      mockAppStore.credentialStatus.llm = true
+      render(<LlmPane />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+      expect(mockAppStore.setKeyDraft).toHaveBeenCalledWith('llm', '')
     })
   })
 
@@ -137,14 +163,14 @@ describe('LlmPane', () => {
     })
 
     it('test button is enabled when API key is present', () => {
-      mockAppStore.config.llm_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.llm = 'sk-test123'
       render(<LlmPane />)
       const button = screen.getByRole('button', { name: /test/i })
       expect(button).not.toBeDisabled()
     })
 
     it('shows loading state during test', () => {
-      mockAppStore.config.llm_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.llm = 'sk-test123'
       mockAppStore.llmTestStatus = 'testing'
       render(<LlmPane />)
       const button = screen.getByRole('button', { name: /test/i })
@@ -155,7 +181,7 @@ describe('LlmPane', () => {
       const mockBenchLlm = vi.mocked(tauri.benchLlmConnection)
       mockBenchLlm.mockResolvedValue(187)
 
-      mockAppStore.config.llm_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.llm = 'sk-test123'
       render(<LlmPane />)
       const button = screen.getByRole('button', { name: /test/i })
 
@@ -176,8 +202,28 @@ describe('LlmPane', () => {
       })
     })
 
+    it('probes the stored key when the field was left alone', async () => {
+      const mockBenchLlm = vi.mocked(tauri.benchLlmConnection)
+      mockBenchLlm.mockResolvedValue(187)
+
+      mockAppStore.credentialStatus.llm = true
+      render(<LlmPane />)
+
+      fireEvent.click(screen.getByRole('button', { name: /test/i }))
+
+      // `null` tells Rust to read the vault. The webview has no key to send.
+      await waitFor(() => {
+        expect(mockBenchLlm).toHaveBeenCalledWith(
+          null,
+          'openai',
+          'https://api.openai.com/v1',
+          'gpt-4o-mini',
+        )
+      })
+    })
+
     it('displays latency in milliseconds when test succeeds', () => {
-      mockAppStore.config.llm_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.llm = 'sk-test123'
       mockAppStore.llmTestStatus = 'success'
       mockAppStore.llmLatencyMs = 187
 
@@ -186,7 +232,7 @@ describe('LlmPane', () => {
     })
 
     it('displays generic success message when latency is null', () => {
-      mockAppStore.config.llm_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.llm = 'sk-test123'
       mockAppStore.llmTestStatus = 'success'
       mockAppStore.llmLatencyMs = null
 
@@ -195,7 +241,7 @@ describe('LlmPane', () => {
     })
 
     it('shows error state UI', () => {
-      mockAppStore.config.llm_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.llm = 'sk-test123'
       mockAppStore.llmTestStatus = 'error'
 
       render(<LlmPane />)

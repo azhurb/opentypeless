@@ -46,10 +46,25 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = "0.4"
 url = "2"
 
+# API keys live in the OS credential vault, never in `settings.json`. The
+# feature set is per-platform on purpose: `keyring`'s defaults pull in every
+# backend, and on Linux the async Secret Service stack drags in a second async
+# runtime alongside Tokio.
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.23"
+keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# `linux-native-sync-persistent` = kernel keyutils for the session, Secret
+# Service for persistence across reboots. `crypto-rust` keeps OpenSSL out of the
+# build. Needs `libdbus-1-dev` at build time (installed in CI).
+keyring = { version = "3.6", default-features = false, features = [
+    "linux-native-sync-persistent",
+    "crypto-rust",
+] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

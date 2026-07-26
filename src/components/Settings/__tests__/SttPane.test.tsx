@@ -16,6 +16,8 @@ vi.mock('react-i18next', () => ({
         'settings.apiKey': 'API Key',
         'settings.test': 'Test',
         'settings.enterApiKey': 'Enter API Key',
+        'settings.apiKeySaved': 'Key saved',
+        'settings.apiKeyRemove': 'Remove',
         'settings.connectionSuccess': 'Connection successful',
         'settings.connectionFailed': 'Connection failed',
         'settings.storedLocally': 'Stored locally',
@@ -33,10 +35,14 @@ vi.mock('react-i18next', () => ({
 const mockAppStore = {
   config: {
     stt_provider: 'deepgram' as string,
-    stt_api_key: '',
     stt_languages: ['en'] as string[],
   },
   updateConfig: vi.fn(),
+  // API keys are not part of the config any more: `keyDrafts` is what the user
+  // is typing, `credentialStatus` is whether the vault already has one.
+  keyDrafts: { stt: null as string | null, llm: null as string | null },
+  setKeyDraft: vi.fn(),
+  credentialStatus: { stt: false, llm: false },
   sttTestStatus: 'idle' as 'idle' | 'testing' | 'success' | 'error',
   setSttTestStatus: vi.fn(),
   sttLatencyMs: null as number | null,
@@ -56,9 +62,10 @@ describe('SttPane', () => {
   beforeEach(() => {
     mockAppStore.config = {
       stt_provider: 'deepgram',
-      stt_api_key: '',
       stt_languages: ['en'],
     }
+    mockAppStore.keyDrafts = { stt: null, llm: null }
+    mockAppStore.credentialStatus = { stt: false, llm: false }
     mockAppStore.sttTestStatus = 'idle'
     mockAppStore.sttLatencyMs = null
     vi.clearAllMocks()
@@ -89,17 +96,14 @@ describe('SttPane', () => {
   })
 
   describe('API Key input', () => {
-    it('renders API key input with current value', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
+    it('renders the draft key as the input value', () => {
+      mockAppStore.keyDrafts.stt = 'sk-test123'
       const { container } = render(<SttPane />)
-      const input = container.querySelector(
-        'input[placeholder="Enter API Key"]',
-      ) as HTMLInputElement
+      const input = container.querySelector('input[type="password"]') as HTMLInputElement
       expect(input.value).toBe('sk-test123')
-      expect(input.type).toBe('password')
     })
 
-    it('updates config and resets test state when API key changes', () => {
+    it('stores a draft, never the config, when the key changes', () => {
       const { container } = render(<SttPane />)
       const input = container.querySelector(
         'input[placeholder="Enter API Key"]',
@@ -107,43 +111,91 @@ describe('SttPane', () => {
 
       fireEvent.change(input, { target: { value: 'sk-new-key' } })
 
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ stt_api_key: 'sk-new-key' })
+      expect(mockAppStore.setKeyDraft).toHaveBeenCalledWith('stt', 'sk-new-key')
+      // The secret must not reach the config object, which is serialized to
+      // settings.json and snapshotted for dirty detection.
+      expect(mockAppStore.updateConfig).not.toHaveBeenCalled()
       expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
       expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
+    })
+
+    it('shows the saved placeholder over an empty field when a key is in the vault', () => {
+      mockAppStore.credentialStatus.stt = true
+      const { container } = render(<SttPane />)
+      const input = container.querySelector('input[type="password"]') as HTMLInputElement
+      // Empty value, not a masked one — a fake value would read as an unsaved
+      // edit to the dirty bar.
+      expect(input.value).toBe('')
+      expect(input.placeholder).toBe('Key saved')
+    })
+
+    it('offers Remove only while a saved key is untouched', () => {
+      mockAppStore.credentialStatus.stt = true
+      const { rerender } = render(<SttPane />)
+      expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
+
+      mockAppStore.keyDrafts.stt = 'sk-typing'
+      rerender(<SttPane />)
+      expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
+    })
+
+    it('Remove stages an empty draft rather than deleting immediately', () => {
+      mockAppStore.credentialStatus.stt = true
+      render(<SttPane />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+      // Empty string, not null: the removal is a pending change the Save bar
+      // commits, like every other setting.
+      expect(mockAppStore.setKeyDraft).toHaveBeenCalledWith('stt', '')
     })
   })
 
   describe('Test button and latency display', () => {
-    it('test button is disabled when API key is empty', () => {
+    it('test button is disabled with no draft and no saved key', () => {
       render(<SttPane />)
       const button = screen.getByRole('button', { name: /test/i })
       expect(button).toBeDisabled()
     })
 
-    it('test button is enabled when API key is present', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
+    it('test button is enabled when a key has been typed', () => {
+      mockAppStore.keyDrafts.stt = 'sk-test123'
       render(<SttPane />)
       const button = screen.getByRole('button', { name: /test/i })
       expect(button).not.toBeDisabled()
     })
 
+    it('test button is enabled when only a saved key exists', () => {
+      mockAppStore.credentialStatus.stt = true
+      render(<SttPane />)
+      const button = screen.getByRole('button', { name: /test/i })
+      expect(button).not.toBeDisabled()
+    })
+
+    it('test button is disabled when the draft was cleared for removal', () => {
+      mockAppStore.credentialStatus.stt = true
+      mockAppStore.keyDrafts.stt = ''
+      render(<SttPane />)
+      const button = screen.getByRole('button', { name: /test/i })
+      expect(button).toBeDisabled()
+    })
+
     it('test button is disabled during testing', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.stt = 'sk-test123'
       mockAppStore.sttTestStatus = 'testing'
       render(<SttPane />)
       const button = screen.getByRole('button', { name: /test/i })
       expect(button).toBeDisabled()
     })
 
-    it('calls benchSttConnection on test button click', async () => {
+    it('probes the typed key when the field has been edited', async () => {
       const mockBenchStt = vi.mocked(tauri.benchSttConnection)
       mockBenchStt.mockResolvedValue(234)
 
-      mockAppStore.config.stt_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.stt = 'sk-test123'
       render(<SttPane />)
-      const button = screen.getByRole('button', { name: /test/i })
 
-      fireEvent.click(button)
+      fireEvent.click(screen.getByRole('button', { name: /test/i }))
 
       await waitFor(() => {
         expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('testing')
@@ -155,8 +207,23 @@ describe('SttPane', () => {
       })
     })
 
+    it('probes the stored key when the field was left alone', async () => {
+      const mockBenchStt = vi.mocked(tauri.benchSttConnection)
+      mockBenchStt.mockResolvedValue(234)
+
+      mockAppStore.credentialStatus.stt = true
+      render(<SttPane />)
+
+      fireEvent.click(screen.getByRole('button', { name: /test/i }))
+
+      // `null` tells Rust to read the vault. The webview has no key to send.
+      await waitFor(() => {
+        expect(mockBenchStt).toHaveBeenCalledWith(null, 'deepgram')
+      })
+    })
+
     it('displays latency in milliseconds when test succeeds', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.stt = 'sk-test123'
       mockAppStore.sttTestStatus = 'success'
       mockAppStore.sttLatencyMs = 234
 
@@ -165,7 +232,7 @@ describe('SttPane', () => {
     })
 
     it('displays generic success message when latency is null', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.stt = 'sk-test123'
       mockAppStore.sttTestStatus = 'success'
       mockAppStore.sttLatencyMs = null
 
@@ -174,7 +241,7 @@ describe('SttPane', () => {
     })
 
     it('shows error state UI', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.stt = 'sk-test123'
       mockAppStore.sttTestStatus = 'error'
 
       render(<SttPane />)
@@ -182,7 +249,7 @@ describe('SttPane', () => {
     })
 
     it('does not display latency when status is error', () => {
-      mockAppStore.config.stt_api_key = 'sk-test123'
+      mockAppStore.keyDrafts.stt = 'sk-test123'
       mockAppStore.sttTestStatus = 'error'
       mockAppStore.sttLatencyMs = 234
 

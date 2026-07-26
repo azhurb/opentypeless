@@ -34,6 +34,7 @@ Where important files live. For module responsibilities see [Architecture overvi
 - `src-tauri/src/llm/` - LLM abstraction, providers, prompt builder.
 - `src-tauri/src/output/` - keyboard and clipboard output implementations.
 - `src-tauri/src/storage/` - config, history, dictionary storage.
+- `src-tauri/src/credentials.rs` - OS credential vault for provider API keys, plus the migration off plaintext `settings.json`.
 - `src-tauri/src/app_detector/` - foreground app detection and app type classification.
 - `src-tauri/migrations/` - SQLite schema files.
 - `src-tauri/tauri.conf.json` - Tauri app/window/bundle config.

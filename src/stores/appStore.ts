@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { CredentialNamespace, CredentialStatus } from '../lib/tauri'
 
 export type PipelineState = 'idle' | 'recording' | 'transcribing' | 'polishing' | 'outputting'
 
@@ -45,12 +46,15 @@ export interface DictionaryEntry {
   last_used: string | null
 }
 
+/**
+ * Mirrors Rust `storage::AppConfig`. Holds **no secrets** — API keys live in the
+ * OS credential vault and are never sent back to the webview. See `keyDrafts`
+ * and `credentialStatus` for how the panes deal with keys.
+ */
 export interface AppConfig {
   stt_provider: SttProvider
-  stt_api_key: string
   stt_languages: string[]
   llm_provider: LlmProvider
-  llm_api_key: string
   llm_model: string
   llm_base_url: string
   polish_enabled: boolean
@@ -72,6 +76,12 @@ export interface AppConfig {
 }
 
 export type TestStatus = 'idle' | 'testing' | 'success' | 'error'
+
+/** Unsaved API key text, per namespace. `null` = field untouched. */
+export interface KeyDrafts {
+  stt: string | null
+  llm: string | null
+}
 
 export interface CorrectionSuggestion {
   rowId: number
@@ -105,6 +115,19 @@ interface AppState {
   configLoaded: boolean
   setConfig: (config: AppConfig) => void
   updateConfig: (partial: Partial<AppConfig>) => void
+
+  // API keys
+  //
+  // A draft is the key the user is currently typing, held only until Save hands
+  // it to the vault. `null` means "the field was not touched", which is what
+  // keeps an untouched pane from reading as an unsaved edit — the bug that
+  // shipped in 0.5.0 when a placeholder was compared against real config.
+  keyDrafts: KeyDrafts
+  setKeyDraft: (namespace: CredentialNamespace, value: string | null) => void
+  clearKeyDrafts: () => void
+  /** Whether the selected providers have a key in the vault. */
+  credentialStatus: CredentialStatus
+  setCredentialStatus: (status: CredentialStatus) => void
 
   // History
   history: HistoryEntry[]
@@ -182,10 +205,8 @@ const isMac =
 
 const defaultConfig: AppConfig = {
   stt_provider: 'glm-asr',
-  stt_api_key: '',
   stt_languages: [],
   llm_provider: 'openrouter',
-  llm_api_key: '',
   llm_model: 'google/gemini-2.5-flash',
   llm_base_url: 'https://openrouter.ai/api/v1',
   polish_enabled: true,
@@ -232,6 +253,13 @@ export const useAppStore = create<AppState>((set) => ({
   // opposed to `config`, which carries unsaved Settings edits).
   setConfig: (config) => set({ config, savedConfig: config, configLoaded: true }),
   updateConfig: (partial) => set((s) => ({ config: { ...s.config, ...partial } })),
+
+  keyDrafts: { stt: null, llm: null },
+  setKeyDraft: (namespace, value) =>
+    set((s) => ({ keyDrafts: { ...s.keyDrafts, [namespace]: value } })),
+  clearKeyDrafts: () => set({ keyDrafts: { stt: null, llm: null } }),
+  credentialStatus: { stt: false, llm: false },
+  setCredentialStatus: (credentialStatus) => set({ credentialStatus }),
 
   history: [],
   setHistory: (history) => set({ history }),

@@ -27,6 +27,7 @@ const getDictionary = vi.fn()
 const checkAccessibilityPermission = vi.fn()
 const checkMicrophonePermission = vi.fn()
 const requestMicrophonePermission = vi.fn()
+const getCredentialStatus = vi.fn()
 
 vi.mock('../lib/tauri', () => ({
   loadOnboardingCompleted: (...a: unknown[]) => loadOnboardingCompleted(...a),
@@ -36,9 +37,11 @@ vi.mock('../lib/tauri', () => ({
   checkAccessibilityPermission: (...a: unknown[]) => checkAccessibilityPermission(...a),
   checkMicrophonePermission: (...a: unknown[]) => checkMicrophonePermission(...a),
   requestMicrophonePermission: (...a: unknown[]) => requestMicrophonePermission(...a),
+  getCredentialStatus: (...a: unknown[]) => getCredentialStatus(...a),
   // Unused in this test but imported by the sub-tree.
   saveOnboardingCompleted: vi.fn(),
   updateConfig: vi.fn(),
+  setApiKey: vi.fn(),
 }))
 
 // MainApp pulls in useTauriEvents which uses listen() — stub.
@@ -80,10 +83,8 @@ import App from '../App'
 
 const MOCK_CONFIG = {
   stt_provider: 'groq-whisper',
-  stt_api_key: 'real-stt-key-from-disk',
   stt_languages: ['en'],
   llm_provider: 'gemini',
-  llm_api_key: 'real-llm-key-from-disk',
   llm_model: 'models/gemini-2.5-flash',
   llm_base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
   polish_enabled: true,
@@ -110,6 +111,7 @@ function resetAll() {
   checkAccessibilityPermission.mockReset().mockResolvedValue(true)
   checkMicrophonePermission.mockReset().mockResolvedValue('authorized')
   requestMicrophonePermission.mockReset().mockResolvedValue(true)
+  getCredentialStatus.mockReset().mockResolvedValue({ stt: true, llm: true })
   // Mount the main-window route.
   window.location.hash = ''
   // Pretend we're on Linux so the mac permission branch is skipped — the
@@ -127,16 +129,18 @@ describe('MainApp initial load — config preservation', () => {
 
   it('loads config even when onboarding is NOT completed', async () => {
     // Pre-this-fix: getConfig() was guarded by `if (done)` and skipped here,
-    // leaving the store on defaultConfig with empty keys. Onboarding would
-    // then save its empty inputs over the on-disk keys.
+    // leaving the store on defaultConfig. Onboarding would then save those
+    // defaults over the user's real settings.
     loadOnboardingCompleted.mockResolvedValue(false)
 
     render(<App />)
 
     await waitFor(() => {
       expect(getConfig).toHaveBeenCalled()
-      expect(useAppStore.getState().config.stt_api_key).toBe('real-stt-key-from-disk')
-      expect(useAppStore.getState().config.llm_api_key).toBe('real-llm-key-from-disk')
+      // Provider, not key: secrets no longer travel in the config. Both
+      // differ from `defaultConfig`, so they prove the on-disk value landed.
+      expect(useAppStore.getState().config.stt_provider).toBe('groq-whisper')
+      expect(useAppStore.getState().config.llm_provider).toBe('gemini')
     })
   })
 
@@ -147,7 +151,20 @@ describe('MainApp initial load — config preservation', () => {
 
     await waitFor(() => {
       expect(getConfig).toHaveBeenCalled()
-      expect(useAppStore.getState().config.stt_api_key).toBe('real-stt-key-from-disk')
+      expect(useAppStore.getState().config.stt_provider).toBe('groq-whisper')
+    })
+  })
+
+  it('reads whether the loaded providers have a key in the vault', async () => {
+    // The replacement for "is stt_api_key non-empty?": the webview can ask
+    // whether a key exists without ever receiving it.
+    loadOnboardingCompleted.mockResolvedValue(true)
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(getCredentialStatus).toHaveBeenCalledWith('groq-whisper', 'gemini')
+      expect(useAppStore.getState().credentialStatus).toEqual({ stt: true, llm: true })
     })
   })
 

@@ -16,7 +16,7 @@ State changes emit `pipeline:state` to the frontend and update tray tooltip / ca
 2. State moves `Idle → Recording`.
 3. Audio capture opens first, before any of the slow async setup. The cpal stream feeds an mpsc channel bounded at ~4 s of headroom (200 chunks of 20 ms), so samples buffer locally while the rest of setup runs — collapsing the dead window between hotkey press and first-captured audio.
 4. Config, current foreground-app context, and dictionary are loaded.
-5. STT API config is built. An empty API key aborts the pipeline, tearing down the running audio capture via `cleanup_failed_start()`.
+5. STT API config is built. The key is read from the OS credential vault by `(stt, provider)` — it is not in `AppConfig`. No key aborts the pipeline, tearing down the running audio capture via `cleanup_failed_start()`; a vault that cannot be *read* aborts with a distinct message, since telling the user to re-enter a key that is already there sends them the wrong way. Only the key's length is ever logged.
 6. STT provider connects. For streaming providers (Deepgram, AssemblyAI) this is a full WebSocket handshake — audio keeps buffering during the handshake, including across a retried attempt (see [Transient Failure Retry](#transient-failure-retry)).
 7. The STT forwarder task spawns, immediately flushing any pre-buffered chunks into the now-connected provider.
 8. Partial and final transcript events are emitted to the frontend.

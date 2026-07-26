@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAppStore } from '../../stores/appStore'
 import { saveOnboardingCompleted, updateConfig as saveConfig } from '../../lib/tauri'
+import { refreshCredentialStatus, writeKeyDrafts } from '../../lib/credentials'
 import { OnboardingLayout } from './OnboardingLayout'
 import { WelcomeStep } from './WelcomeStep'
 import { SttSetupStep } from './SttSetupStep'
@@ -67,17 +68,33 @@ export function Onboarding() {
   }
 
   const config = useAppStore((s) => s.config)
+  const clearKeyDrafts = useAppStore((s) => s.clearKeyDrafts)
+
+  /**
+   * Persist the config plus any key typed on this step.
+   *
+   * The keys are not part of the config any more, so onboarding has to flush
+   * them separately — otherwise stepping past the STT pane would drop the key
+   * the user just tested. Drafts clear only after the vault accepted them, so a
+   * failure leaves the field populated for a retry.
+   */
+  const persistStep = async () => {
+    await writeKeyDrafts()
+    await saveConfig(config)
+    clearKeyDrafts()
+    await refreshCredentialStatus()
+  }
 
   const handleNext = async () => {
     if (step < TOTAL_STEPS - 1) {
       try {
-        await saveConfig(config)
+        await persistStep()
       } catch {
         // Best-effort save — continue navigation even if save fails
       }
       setStep(step + 1)
     } else {
-      await saveConfig(config)
+      await persistStep()
       await saveOnboardingCompleted()
       setOnboardingCompleted(true)
     }
@@ -86,7 +103,7 @@ export function Onboarding() {
   const handleBack = async () => {
     if (step > 0) {
       try {
-        await saveConfig(config)
+        await persistStep()
       } catch {
         // Best-effort save
       }
@@ -95,7 +112,7 @@ export function Onboarding() {
   }
 
   const handleSkip = async () => {
-    await saveConfig(config)
+    await persistStep()
     await saveOnboardingCompleted()
     setOnboardingCompleted(true)
   }

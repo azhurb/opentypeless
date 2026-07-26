@@ -5,6 +5,7 @@ import { useTheme } from './hooks/useTheme'
 import { useDetectedLanguageNotifier } from './hooks/useDetectedLanguageNotifier'
 import { useAppStore } from './stores/appStore'
 import { useRoute } from './lib/router'
+import { useCredentialStatusSync } from './lib/credentials'
 import {
   loadOnboardingCompleted,
   getConfig,
@@ -54,6 +55,7 @@ function MainApp() {
   useTauriEvents()
   useTheme()
   useDetectedLanguageNotifier()
+  useCredentialStatusSync()
 
   const onboardingCompleted = useAppStore((s) => s.onboardingCompleted)
   const setOnboardingCompleted = useAppStore((s) => s.setOnboardingCompleted)

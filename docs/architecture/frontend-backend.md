@@ -14,9 +14,10 @@ Current command groups (grep-verified against `generate_handler!`):
 
 - Pipeline: `start_recording`, `stop_recording`, `abort_recording`.
 - Permissions: `check_accessibility_permission`, `request_accessibility_permission`, `check_microphone_permission`, `request_microphone_permission`. The two microphone commands are macOS-only in effect — on other platforms they short-circuit to `authorized` / `true`. Implementation goes through `src-tauri/src/audio/permission.rs`, which links a small ObjC shim (`src-tauri/src/audio/mic_permission.m`, compiled by `build.rs`) wrapping `AVCaptureDevice.authorizationStatus` and `requestAccess`.
-- Config: `get_config`, `update_config`.
-- Provider checks: `test_stt_connection`, `test_llm_connection`, `bench_stt_connection`, `bench_llm_connection`.
-- LLM metadata: `fetch_llm_models`.
+- Config: `get_config`, `update_config`. Neither carries an API key — see Credentials below.
+- Credentials: `get_credential_status`, `set_api_key` (an empty key deletes the entry). Keys are write-only from the webview: it can save one and ask whether one exists, but never read one back. Details in [Storage → Credentials](storage.md#credentials-os-credential-vault).
+- Provider checks: `test_stt_connection`, `test_llm_connection`, `bench_stt_connection`, `bench_llm_connection`. Each takes `api_key: Option<String>` — `Some` probes a key the user has typed but not saved, `None` reads the vault.
+- LLM metadata: `fetch_llm_models` (same optional-key convention, plus a `provider` naming the vault entry).
 - History: `get_history`, `clear_history`.
 - Dictionary: `get_dictionary`, `add_dictionary_entry`, `remove_dictionary_entry`.
 - Hotkey: `update_hotkey`, `pause_hotkey`, `resume_hotkey`.

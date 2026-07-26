@@ -1,6 +1,7 @@
 pub mod app_detector;
 pub mod audio;
 pub mod correction;
+pub mod credentials;
 pub mod llm;
 pub mod output;
 pub mod pipeline;
@@ -197,6 +198,70 @@ async fn update_config(
     Ok(())
 }
 
+/// Which of the two selected providers have a key in the vault.
+///
+/// The panes need this to decide between "enter your key" and "a key is saved",
+/// and it is the whole reason the frontend can stop holding secrets: it answers
+/// *is a key set* without ever handing one back to the webview.
+#[derive(serde::Serialize)]
+struct CredentialStatus {
+    stt: bool,
+    llm: bool,
+}
+
+#[tauri::command]
+async fn get_credential_status(
+    vault: tauri::State<'_, credentials::SharedVault>,
+    stt_provider: String,
+    llm_provider: String,
+) -> Result<CredentialStatus, String> {
+    // A vault that cannot be read reports "no key set" rather than failing the
+    // whole Settings pane; the pipeline and the Test button surface the real
+    // error when the user actually tries to use the key.
+    let present = |id: credentials::CredentialId| match vault.read(&id) {
+        Ok(key) => key.is_some_and(|k| !k.is_empty()),
+        Err(e) => {
+            tracing::warn!("vault read failed for {}: {:#}", id.account(), e);
+            false
+        }
+    };
+    Ok(CredentialStatus {
+        stt: present(credentials::CredentialId::stt(&stt_provider)),
+        llm: present(credentials::CredentialId::llm(&llm_provider)),
+    })
+}
+
+/// Store one provider key. This is the only path a secret travels, and it
+/// travels one way — nothing reads it back out to the frontend.
+#[tauri::command]
+async fn set_api_key(
+    vault: tauri::State<'_, credentials::SharedVault>,
+    namespace: String,
+    provider: String,
+    api_key: String,
+) -> Result<(), String> {
+    // Reject an unknown namespace rather than filing the key under it: a typo
+    // would otherwise write an entry nothing ever reads, and the user would see
+    // a key that saved successfully but never works.
+    if namespace != credentials::STT_NAMESPACE && namespace != credentials::LLM_NAMESPACE {
+        return Err(format!("Unknown credential namespace: {namespace}"));
+    }
+    if provider.is_empty() {
+        return Err("No provider specified".to_string());
+    }
+    let id = credentials::CredentialId::new(&namespace, &provider);
+    // An empty key means "forget this one" — otherwise clearing the field would
+    // leave the old secret in the vault while the UI showed an empty box.
+    if api_key.is_empty() {
+        return vault
+            .delete(&id)
+            .map_err(|e| format!("Could not remove the saved key: {e:#}"));
+    }
+    vault
+        .write(&id, &api_key)
+        .map_err(|e| format!("Could not save the key to the system credential store: {e:#}"))
+}
+
 /// `(endpoint, model, extra_form_fields)` for a Whisper-compatible probe.
 type WhisperCompatTarget = (
     &'static str,
@@ -250,16 +315,42 @@ async fn check_openai_whisper_model(client: &reqwest::Client, api_key: &str) -> 
     Ok(())
 }
 
+/// The key a connection probe should actually use.
+///
+/// `candidate` is the key the user has typed but not yet saved. The frontend
+/// sends it only while the field is being edited, which is the case the Test
+/// button exists for — during onboarding nothing is saved yet, and in Settings
+/// probing the *stored* key right after pasting a new one would report on the
+/// wrong credential. `None` means the field was left alone, so the vault is the
+/// source of truth.
+///
+/// Note the candidate is never persisted here; saving is `set_api_key`.
+fn resolve_probe_key(
+    vault: &credentials::SharedVault,
+    candidate: Option<String>,
+    id: &credentials::CredentialId,
+) -> Result<String, String> {
+    match candidate {
+        Some(key) => Ok(key),
+        None => vault
+            .read(id)
+            .map(Option::unwrap_or_default)
+            .map_err(|e| format!("Could not read the saved key: {e:#}")),
+    }
+}
+
 #[tauri::command]
 async fn test_stt_connection(
     state: tauri::State<'_, HttpClient>,
-    api_key: String,
+    vault: tauri::State<'_, credentials::SharedVault>,
+    api_key: Option<String>,
     provider: String,
 ) -> Result<bool, String> {
     if provider.is_empty() {
         return Ok(false);
     }
 
+    let api_key = resolve_probe_key(&vault, api_key, &credentials::CredentialId::stt(&provider))?;
     if api_key.is_empty() {
         return Ok(false);
     }
@@ -325,7 +416,8 @@ async fn test_stt_connection(
 #[tauri::command]
 async fn test_llm_connection(
     state: tauri::State<'_, HttpClient>,
-    api_key: String,
+    vault: tauri::State<'_, credentials::SharedVault>,
+    api_key: Option<String>,
     provider: String,
     base_url: String,
     model: String,
@@ -334,6 +426,7 @@ async fn test_llm_connection(
         return Ok(false);
     }
 
+    let api_key = resolve_probe_key(&vault, api_key, &credentials::CredentialId::llm(&provider))?;
     if api_key.is_empty() || base_url.is_empty() {
         return Ok(false);
     }
@@ -368,12 +461,19 @@ async fn test_llm_connection(
 #[tauri::command]
 async fn fetch_llm_models(
     state: tauri::State<'_, HttpClient>,
-    api_key: String,
+    vault: tauri::State<'_, credentials::SharedVault>,
+    api_key: Option<String>,
+    provider: String,
     base_url: String,
 ) -> Result<Vec<String>, String> {
     if base_url.is_empty() {
         return Ok(vec![]);
     }
+
+    // `provider` is new here: it names the vault entry to fall back to when the
+    // user has not retyped the key. Ollama and other local endpoints need no
+    // key at all, so an empty result is normal rather than an error.
+    let api_key = resolve_probe_key(&vault, api_key, &credentials::CredentialId::llm(&provider))?;
 
     // Validate base_url is a proper HTTP(S) URL
     let parsed = url::Url::parse(&base_url).map_err(|e| format!("Invalid base URL: {e}"))?;
@@ -423,13 +523,15 @@ async fn fetch_llm_models(
 #[tauri::command]
 async fn bench_stt_connection(
     state: tauri::State<'_, HttpClient>,
-    api_key: String,
+    vault: tauri::State<'_, credentials::SharedVault>,
+    api_key: Option<String>,
     provider: String,
 ) -> Result<u32, String> {
     if provider.is_empty() {
         return Err("No provider specified".to_string());
     }
 
+    let api_key = resolve_probe_key(&vault, api_key, &credentials::CredentialId::stt(&provider))?;
     if api_key.is_empty() {
         return Err("API key is empty".to_string());
     }
@@ -511,7 +613,8 @@ async fn bench_stt_connection(
 #[tauri::command]
 async fn bench_llm_connection(
     state: tauri::State<'_, HttpClient>,
-    api_key: String,
+    vault: tauri::State<'_, credentials::SharedVault>,
+    api_key: Option<String>,
     provider: String,
     base_url: String,
     model: String,
@@ -520,6 +623,7 @@ async fn bench_llm_connection(
         return Err("No provider specified".to_string());
     }
 
+    let api_key = resolve_probe_key(&vault, api_key, &credentials::CredentialId::llm(&provider))?;
     if api_key.is_empty() || base_url.is_empty() {
         return Err("API key or base URL is empty".to_string());
     }
@@ -1146,7 +1250,11 @@ pub fn run() {
             let db_path = data_dir.join("opentypeless.db");
 
             // Initialize stores
-            let config_manager = storage::ConfigManager::new(app_handle.clone());
+            // Built before the config manager: loading the config runs the
+            // plaintext-key migration, which needs the vault.
+            let vault: credentials::SharedVault =
+                Arc::new(credentials::SystemCredentialVault::new());
+            let config_manager = storage::ConfigManager::new(app_handle.clone(), vault.clone());
             let history_store = storage::HistoryStore::new(db_path.clone())
                 .map_err(|e| anyhow::anyhow!("Failed to init history store: {}", e))?;
             let dictionary_store = std::sync::Arc::new(
@@ -1181,6 +1289,7 @@ pub fn run() {
             }
 
             app.manage(HttpClient(http_client));
+            app.manage(vault);
             app.manage(config_manager);
             app.manage(history_store);
             app.manage(dictionary_store);
@@ -1388,10 +1497,18 @@ pub fn run() {
                 .and_then(|s| s.get("onboarding_completed"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            if should_show_window_on_launch(
-                initial_config.stt_api_key.is_empty(),
-                onboarding_completed,
-            ) {
+            // "Has a key" now means "the vault has an entry for the selected
+            // STT provider" — the config no longer carries the secret. A vault
+            // that cannot be read counts as no key, which errs toward showing
+            // onboarding rather than silently starting hidden and broken.
+            let stt_key_empty = app
+                .state::<credentials::SharedVault>()
+                .read(&credentials::CredentialId::stt(
+                    &initial_config.stt_provider,
+                ))
+                .unwrap_or_default()
+                .is_none_or(|key| key.is_empty());
+            if should_show_window_on_launch(stt_key_empty, onboarding_completed) {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
@@ -1449,6 +1566,8 @@ pub fn run() {
             bench_stt_connection,
             bench_llm_connection,
             fetch_llm_models,
+            get_credential_status,
+            set_api_key,
             get_history,
             clear_history,
             get_dictionary,

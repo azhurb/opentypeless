@@ -141,7 +141,7 @@ All settings are accessible from the in-app Settings panel:
 - **General** — hotkey, theme, auto-start
 - **Dictionary** — add custom terms for better transcription accuracy
 
-API keys are stored locally via `tauri-plugin-store`. All STT/LLM requests go directly from your machine to the provider you configure. There is no cloud account, subscription, telemetry, or auto-update — this fork is BYOK-only.
+API keys are stored in your operating system's credential manager — Keychain on macOS, Credential Manager on Windows, Secret Service on Linux — never in a plaintext settings file. If you are upgrading from a version that kept them in `settings.json`, they move across on first launch. All STT/LLM requests go directly from your machine to the provider you configure. There is no cloud account, subscription, telemetry, or auto-update — this fork is BYOK-only.
 
 ## Architecture
 

@@ -160,7 +160,8 @@ User-facing promise: API keys stay local and provider requests go directly to th
 
 Repo evidence:
 
-- API keys are stored in `settings.json` through `tauri-plugin-store`.
+- API keys are stored in the OS credential vault (`src-tauri/src/credentials.rs`), not in `settings.json`, and are never returned to the webview. See [Storage → Credentials](../architecture/storage.md#credentials-os-credential-vault).
+- Plaintext keys from older installs migrate into the vault on first launch, and are cleared from `settings.json` only once the vault write succeeds.
 - All STT/LLM providers call external provider endpoints directly from Rust.
 - There is no auth, subscription, telemetry, or auto-update code in the build.
 
