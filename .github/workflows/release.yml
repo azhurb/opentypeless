@@ -40,6 +40,18 @@ jobs:
         shell: bash
         run: |
           TAG_VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+
+          # Refuse anything that is not a release tag. Dispatching this workflow
+          # on a *branch* used to fall through to `github.ref_name`, which sailed
+          # past every check and produced a release versioned from nowhere — the
+          # About page in that build reported it, and the bogus draft had to be
+          # deleted by hand. Fail here instead, where the reason is obvious.
+          if [[ ! "$TAG_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a release tag like v1.2.3, got '${TAG_VERSION}'."
+            echo "::error::Dispatch this workflow with --field tag=vX.Y.Z, or run it from a tag push."
+            exit 1
+          fi
+
           VERSION="${TAG_VERSION#v}"
           echo "Syncing version: $VERSION"
 

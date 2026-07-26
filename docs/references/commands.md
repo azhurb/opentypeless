@@ -106,6 +106,10 @@ Releases are tag-driven. `.github/workflows/release.yml` triggers on tags matchi
    gh workflow run release.yml --field tag=v0.1.25
    ```
 
+   The `tag` field is required in that form and must be `vX.Y.Z`. Dispatching without it used to
+   fall through to the branch name, which passed every check and produced a release versioned
+   out of nowhere; the workflow now fails fast instead.
+
 5. The `Release` workflow runs four parallel builds: Windows (`x86_64-pc-windows-msvc`), macOS arm64 (`aarch64-apple-darwin`), macOS x86_64 (`x86_64-apple-darwin`), Linux (`x86_64-unknown-linux-gnu`).
 6. CI strips the leading `v` and writes the version into `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` *during the build only* — these files stay at `0.1.0` in git. **Do not commit version bumps.**
 7. `tauri-apps/tauri-action@v0` uploads the artifacts to a **draft** GitHub Release with a stub body. Replace the body with proper release notes (sections from the `CHANGELOG.md` entry plus a Downloads section that includes the macOS Gatekeeper `xattr -dr com.apple.quarantine` workaround — the build is signed but not notarized, so Sequoia / Tahoe block first launch). Use a prior release as a style reference. Smoke-test the artifacts, then publish from the Releases page (default to non-prerelease for visibility).
