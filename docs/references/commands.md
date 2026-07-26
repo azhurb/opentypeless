@@ -24,6 +24,33 @@ npm run tauri build
 
 Output: `src-tauri/target/release/bundle/`.
 
+## CI Does Not Run Automatically On This Fork
+
+**Run the checks below locally before opening a PR. A PR with no red check has not been
+verified — it means nothing ran.**
+
+GitHub disables workflows on forks by default. The enable action exists only as a banner in
+the repository's **Actions tab** ("Workflows aren't being run on this forked repository" →
+*"I understand my workflows, go ahead and enable them"*); it is deliberately absent from
+Settings → Actions, and there is no REST API for it. Note that
+`GET /repos/{owner}/{repo}/actions/permissions` returns `"enabled": true` regardless — that
+field is the permissions *policy*, not the fork's activation state, so it is not a way to
+check this.
+
+Until that banner is accepted, `on: push` and `on: pull_request` never fire. Every run in
+this repository's history is `workflow_dispatch`, and `ci.yml` had **0 runs** up to
+2026-07-26 — which is why 14 `clippy -D warnings` errors and both formatter failures reached
+`v0.5.0` unnoticed. It is also the same root cause as the release tag-push trigger stalling
+(see [Cutting a release](#cutting-a-release), step 4).
+
+Both workflows accept a manual trigger, so CI can be run on demand either way:
+
+```bash
+gh workflow run ci.yml                      # current default branch
+gh workflow run ci.yml --ref <branch>       # a specific branch
+gh run list --workflow ci.yml --limit 5     # check results
+```
+
 ## Frontend Checks (mirrors `check-frontend` in CI)
 
 ```bash
