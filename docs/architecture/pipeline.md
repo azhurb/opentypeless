@@ -30,7 +30,7 @@ Background: audio capture used to be the *last* step of setup. With streaming ST
 3. Audio capture stops; pipeline waits for STT finalization.
 4. If polish is enabled, final text is sent to the LLM provider.
 5. Output runs (clipboard paste — see [Output Path](#output-path)).
-6. History is stored.
+6. History is stored — **only if `history_enabled`**, re-read here rather than taken from the recording-start config snapshot so a mid-dictation opt-out is honored. When it is off the insert is skipped and only the retention prune runs. See [Storage → Retention](storage.md#retention).
 7. State returns to `Idle`.
 
 ## Events

@@ -65,7 +65,7 @@
 - 🌐 Translation mode: speak in one language, output in another (20+ languages)
 - 📖 Custom dictionary for domain-specific terms
 - 🔍 Per-app detection to adapt formatting
-- 📜 Local history with full-text search
+- 📜 Local history with full-text search — optional, with automatic cleanup after 7/30/90 days
 - 🌗 Dark / light / system theme
 - 🚀 Auto-start on login
 

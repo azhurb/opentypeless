@@ -164,6 +164,25 @@ Repo evidence:
 - All STT/LLM providers call external provider endpoints directly from Rust.
 - There is no auth, subscription, telemetry, or auto-update code in the build.
 
+### Optional History And Retention
+
+User-facing promise: recording dictation history is a choice, and what is recorded does not
+have to be kept forever.
+
+Repo evidence:
+
+- Settings → General → History has a `Save dictation history` toggle (`history_enabled`) and
+  a `Keep history for` picker (`history_retention_days`: Forever / 7 / 30 / 90 days).
+- With the toggle off, the pipeline skips the history insert entirely; dictations are still
+  typed. Entries already stored stay listed and searchable, and the History page says so.
+- Retention applies to stored entries whether or not saving is on, so turning saving off is
+  not a way to freeze the archive; the History notice and the Settings hint both say this.
+- Narrowing the retention window asks for confirmation before it deletes, matching
+  "Clear All History".
+- Rows removed by retention or "Clear all" are scrubbed from the database file, not just
+  unlinked — see [Storage → Retention](../architecture/storage.md#retention).
+- Both default to today's behavior (on, forever), so upgrading deletes nothing.
+
 ## Offline And Local Models
 
 User-facing promise: local LLM use is supported through Ollama. With a local STT provider plus a local LLM, the app can run fully offline.

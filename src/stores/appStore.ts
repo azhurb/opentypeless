@@ -66,6 +66,9 @@ export interface AppConfig {
   ui_language: string
   capsule_auto_hide: boolean
   learn_from_corrections_enabled: boolean
+  history_enabled: boolean
+  /** Age limit for history rows, in days. 0 = keep forever. */
+  history_retention_days: number
 }
 
 export type TestStatus = 'idle' | 'testing' | 'success' | 'error'
@@ -198,6 +201,8 @@ const defaultConfig: AppConfig = {
   ui_language: 'en',
   capsule_auto_hide: false,
   learn_from_corrections_enabled: false,
+  history_enabled: true,
+  history_retention_days: 0,
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -220,7 +225,12 @@ export const useAppStore = create<AppState>((set) => ({
 
   config: defaultConfig,
   configLoaded: false,
-  setConfig: (config) => set({ config, configLoaded: true }),
+  // `setConfig` is only ever called with a config that came *from* Rust — the
+  // initial `getConfig()` load and the `config:changed` broadcast after a
+  // successful save. So it is also the right place to refresh `savedConfig`,
+  // which is what tells the UI what the backend actually has on disk (as
+  // opposed to `config`, which carries unsaved Settings edits).
+  setConfig: (config) => set({ config, savedConfig: config, configLoaded: true }),
   updateConfig: (partial) => set((s) => ({ config: { ...s.config, ...partial } })),
 
   history: [],

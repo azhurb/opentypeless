@@ -31,6 +31,12 @@ describe('appStore', () => {
       expect(config.polish_enabled).toBe(true)
     })
 
+    it('defaults history to on and retention to forever, matching pre-toggle behavior', () => {
+      const { config } = getState()
+      expect(config.history_enabled).toBe(true)
+      expect(config.history_retention_days).toBe(0)
+    })
+
     it('setConfig replaces entire config', () => {
       const newConfig = { ...getState().config, theme: 'dark' as const }
       getState().setConfig(newConfig)

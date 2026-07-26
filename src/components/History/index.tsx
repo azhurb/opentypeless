@@ -6,13 +6,19 @@ import { spring } from '../../lib/animations'
 import { useAppStore } from '../../stores/appStore'
 import { clearHistory } from '../../lib/tauri'
 import { toast } from '../Toast'
+import { ConfirmDialog } from '../ConfirmDialog'
 
 export function History() {
   const history = useAppStore((s) => s.history)
   const setHistory = useAppStore((s) => s.setHistory)
+  // Read the *persisted* config, not `config` — the latter carries unsaved
+  // Settings edits, so it would let this page claim saving is off while Rust is
+  // still recording every dictation.
+  const historyEnabled = useAppStore((s) => (s.savedConfig ?? s.config).history_enabled)
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<number | null>(null)
+  const [confirmingClear, setConfirmingClear] = useState(false)
 
   const filtered = useMemo(
     () =>
@@ -40,7 +46,7 @@ export function History() {
   }
 
   const handleClear = async () => {
-    if (!window.confirm(t('history.clearConfirm'))) return
+    setConfirmingClear(false)
     try {
       await clearHistory()
       setHistory([])
@@ -72,6 +78,16 @@ export function History() {
         <h2 className="text-[15px] font-medium">{t('history.title')}</h2>
       </div>
 
+      {/* Saving-off notice — entries already stored stay readable */}
+      {!historyEnabled && (
+        <p
+          data-testid="history-saving-disabled"
+          className="mx-5 mt-3 px-3 py-2 rounded-[10px] bg-bg-secondary text-[12px] text-text-tertiary"
+        >
+          {t('history.savingDisabled')}
+        </p>
+      )}
+
       {/* Search — jelly focus */}
       <div className="px-5 py-3">
         <div className="relative">
@@ -98,8 +114,13 @@ export function History() {
             ) : (
               <>
                 {t('history.noHistory')}
-                <br />
-                <span className="text-[12px]">{t('history.noHistoryHint')}</span>
+                {/* The "press your hotkey" hint would be false while saving is off */}
+                {historyEnabled && (
+                  <>
+                    <br />
+                    <span className="text-[12px]">{t('history.noHistoryHint')}</span>
+                  </>
+                )}
               </>
             )}
           </p>
@@ -163,7 +184,7 @@ export function History() {
       {history.length > 0 && (
         <div className="px-5 py-3 border-t border-border">
           <motion.button
-            onClick={handleClear}
+            onClick={() => setConfirmingClear(true)}
             whileHover={{ scale: 1.04 }}
             whileTap={{ scaleX: 1.06, scaleY: 0.94 }}
             transition={spring.jellyGentle}
@@ -174,6 +195,15 @@ export function History() {
           </motion.button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmingClear}
+        message={t('history.clearConfirm')}
+        confirmLabel={t('common.delete')}
+        destructive
+        onConfirm={handleClear}
+        onCancel={() => setConfirmingClear(false)}
+      />
     </div>
   )
 }

@@ -6,6 +6,24 @@
 - No `any` (ESLint enforces).
 - Prettier formats files under `src/`.
 
+### No `window.confirm` / `alert` / `prompt`
+
+They do nothing on macOS. WKWebView only displays a JS dialog when the host
+implements `WKUIDelegate`'s `runJavaScriptConfirmPanelWithMessage:` (and the
+alert/text-input equivalents), and `wry` implements none of them — so `confirm()`
+returns falsy and `alert()` is a silent no-op, with no dialog shown and no error.
+A guard written as `if (!window.confirm(...)) return` therefore becomes a
+permanent early return; that is exactly how "Clear All History" shipped as a
+button that did nothing. The engines on Linux (webkit2gtk) and Windows (WebView2)
+supply their own default dialogs, so the bug is macOS-only and easy to miss.
+
+Use [`src/components/ConfirmDialog.tsx`](../../src/components/ConfirmDialog.tsx)
+for confirmations and `toast()` for notices. `no-restricted-properties` in
+`eslint.config.js` fails the build on all three.
+
+Tests must drive the real dialog. Stubbing `window.confirm` is what let this ship
+green — the mock asserted a contract the platform does not provide.
+
 ## Rust
 
 - Rust 2021.

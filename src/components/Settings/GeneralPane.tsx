@@ -1,10 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../stores/appStore'
 import type { HotkeyMode } from '../../stores/appStore'
 import { updateHotkey, pauseHotkey, resumeHotkey } from '../../lib/tauri'
 import { SegmentedControl } from './shared/SegmentedControl'
 import { Toggle } from './shared/Toggle'
+import { ConfirmDialog } from '../ConfirmDialog'
 
 // Keys that can be used as hotkeys without a modifier
 const STANDALONE_KEYS = new Set([
@@ -36,6 +37,10 @@ const STANDALONE_KEYS = new Set([
   'F11',
   'F12',
 ])
+
+// Age limits offered for stored history. 0 = keep forever (the default, so an
+// upgrade never silently deletes anything).
+const RETENTION_OPTIONS = [0, 7, 30, 90]
 
 function HotkeyRecorder() {
   const config = useAppStore((s) => s.config)
@@ -181,8 +186,42 @@ function HotkeyRecorder() {
 
 export function GeneralPane() {
   const config = useAppStore((s) => s.config)
+  const savedConfig = useAppStore((s) => s.savedConfig)
   const updateConfig = useAppStore((s) => s.updateConfig)
   const { t } = useTranslation()
+
+  const retentionDays = config.history_retention_days
+
+  // A value written by a hand edit or a build offering different choices must stay
+  // visible. Without this the select falls back to rendering its first option
+  // ("Forever") while the backend keeps pruning at the stored value.
+  const retentionOptions = useMemo(
+    () =>
+      RETENTION_OPTIONS.includes(retentionDays)
+        ? RETENTION_OPTIONS
+        : [...RETENTION_OPTIONS, retentionDays].sort((a, b) => a - b),
+    [retentionDays],
+  )
+
+  // Narrowing the window deletes stored entries the moment Save is pressed, and
+  // there is no undo — the same data behind the confirm-gated "Clear All History".
+  // Compare against what is on disk, since that is what decides whether anything
+  // actually gets deleted.
+  //
+  // The confirmation must go through ConfirmDialog, not `window.confirm` — the
+  // latter returns falsy without displaying anything on macOS, which would
+  // silently discard every narrowing change. See ConfirmDialog's doc comment.
+  const [pendingRetention, setPendingRetention] = useState<number | null>(null)
+
+  const handleRetentionChange = (value: number) => {
+    const persisted = savedConfig?.history_retention_days ?? retentionDays
+    const narrows = value !== 0 && (persisted === 0 || value < persisted)
+    if (narrows) {
+      setPendingRetention(value)
+      return
+    }
+    updateConfig({ history_retention_days: value })
+  }
 
   return (
     <div className="space-y-6">
@@ -231,6 +270,57 @@ export function GeneralPane() {
           />
         </div>
       </Section>
+
+      <Section title={t('settings.history')}>
+        <div className="space-y-3">
+          <Toggle
+            checked={config.history_enabled}
+            onChange={(checked) => updateConfig({ history_enabled: checked })}
+            label={t('settings.saveHistory')}
+          />
+          <div>
+            <label
+              htmlFor="history-retention"
+              className="block text-[13px] text-text-primary mb-1.5"
+            >
+              {t('settings.keepHistoryFor')}
+            </label>
+            <select
+              id="history-retention"
+              value={retentionDays}
+              onChange={(e) => handleRetentionChange(Number(e.target.value))}
+              className="w-full px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
+            >
+              {retentionOptions.map((days) => (
+                <option key={days} value={days}>
+                  {days === 0
+                    ? t('settings.retentionForever')
+                    : t('settings.retentionDays', { days })}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-text-tertiary mt-1.5">
+              {retentionDays === 0
+                ? t('settings.retentionHintForever')
+                : t('settings.retentionHintDays', { days: retentionDays })}
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      <ConfirmDialog
+        open={pendingRetention !== null}
+        message={t('settings.retentionConfirm', { days: pendingRetention ?? 0 })}
+        confirmLabel={t('common.delete')}
+        destructive
+        onConfirm={() => {
+          if (pendingRetention !== null) {
+            updateConfig({ history_retention_days: pendingRetention })
+          }
+          setPendingRetention(null)
+        }}
+        onCancel={() => setPendingRetention(null)}
+      />
     </div>
   )
 }
