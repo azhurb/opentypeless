@@ -87,6 +87,10 @@ vi.mock('../../../lib/tauri', () => ({
   removeDictionaryEntry: vi.fn().mockResolvedValue(undefined),
   getDictionary: vi.fn().mockResolvedValue([]),
   updateConfig: vi.fn().mockResolvedValue(undefined),
+  benchSttConnection: vi.fn().mockResolvedValue(120),
+  benchLlmConnection: vi.fn().mockResolvedValue(120),
+  setApiKey: vi.fn().mockResolvedValue(undefined),
+  getCredentialStatus: vi.fn().mockResolvedValue({ stt: 'missing', llm: 'missing' }),
 }))
 
 // ─── Mock @tauri-apps/plugin-opener ─────────────────────────────────────────
@@ -300,10 +304,12 @@ describe('LlmPane models cache: skip fetch when populated', () => {
 
     useAppStore.getState().setLlmModels(['cached-model'])
     useAppStore.getState().updateConfig({
-      llm_api_key: 'sk-test',
       llm_base_url: 'https://api.openai.com/v1',
       llm_provider: 'openai',
     })
+    // The key is a draft, not config — the model fetch keys off the draft so
+    // the list refreshes while the user is still pasting.
+    useAppStore.getState().setKeyDraft('llm', 'sk-test')
 
     renderSettings()
     clickSidebarItem('settings.aiPolish')
@@ -322,10 +328,12 @@ describe('LlmPane models cache: skip fetch when populated', () => {
 
     useAppStore.getState().setLlmModels([])
     useAppStore.getState().updateConfig({
-      llm_api_key: 'sk-test',
       llm_base_url: 'https://api.openai.com/v1',
       llm_provider: 'openai',
     })
+    // The key is a draft, not config — the model fetch keys off the draft so
+    // the list refreshes while the user is still pasting.
+    useAppStore.getState().setKeyDraft('llm', 'sk-test')
 
     renderSettings()
     clickSidebarItem('settings.aiPolish')
@@ -344,10 +352,12 @@ describe('LlmPane models cache: skip fetch when populated', () => {
 
     useAppStore.getState().setLlmModels([])
     useAppStore.getState().updateConfig({
-      llm_api_key: 'sk-test',
       llm_base_url: 'https://api.openai.com/v1',
       llm_provider: 'openai',
     })
+    // The key is a draft, not config — the model fetch keys off the draft so
+    // the list refreshes while the user is still pasting.
+    useAppStore.getState().setKeyDraft('llm', 'sk-test')
 
     renderSettings()
     clickSidebarItem('settings.aiPolish')
@@ -367,6 +377,9 @@ describe('DirtyBar behavior', () => {
   beforeEach(() => {
     resetStore()
     seedSavedConfig()
+    // The save tests below assert on *whether* a command was called, so calls
+    // must not carry over between them.
+    vi.clearAllMocks()
   })
 
   it('is hidden in the initial state', () => {
@@ -409,6 +422,110 @@ describe('DirtyBar behavior', () => {
       expect(screen.getByText('Save')).toBeDefined()
       expect(screen.getByText('Reset')).toBeDefined()
     })
+  })
+
+  it('stays hidden when a saved key is merely displayed', async () => {
+    // The 0.5.0 regression in miniature: a field that shows *something* for a
+    // stored key must not count as an edit. `credentialStatus` is display
+    // state; only a draft is a change.
+    act(() => {
+      useAppStore.getState().setCredentialStatus({ stt: 'saved', llm: 'saved' })
+    })
+    renderSettings()
+    await waitFor(() => {
+      expect(screen.queryByText('Unsaved changes')).toBeNull()
+    })
+  })
+
+  it('appears when a key is typed, even though the config is unchanged', async () => {
+    renderSettings()
+    act(() => {
+      useAppStore.getState().setKeyDraft('stt', 'sk-new')
+    })
+    await waitFor(() => {
+      expect(screen.getByText('Unsaved changes')).toBeDefined()
+    })
+    // Proof the config really is untouched — the key travels separately.
+    expect(JSON.stringify(useAppStore.getState().config)).toBe(
+      JSON.stringify(useAppStore.getState().savedConfig),
+    )
+  })
+
+  it('appears when a saved key is staged for removal', async () => {
+    act(() => {
+      useAppStore.getState().setCredentialStatus({ stt: 'saved', llm: 'missing' })
+    })
+    renderSettings()
+    act(() => {
+      // Remove stages an empty string; `null` would mean "untouched".
+      useAppStore.getState().setKeyDraft('stt', '')
+    })
+    await waitFor(() => {
+      expect(screen.getByText('Unsaved changes')).toBeDefined()
+    })
+  })
+
+  it('Reset discards a typed key along with config edits', async () => {
+    renderSettings()
+    act(() => {
+      useAppStore.getState().setKeyDraft('llm', 'sk-oops')
+    })
+    await waitFor(() => {
+      expect(screen.getByText('Unsaved changes')).toBeDefined()
+    })
+
+    fireEvent.click(screen.getByText('Reset'))
+
+    await waitFor(() => {
+      expect(screen.queryByText('Unsaved changes')).toBeNull()
+    })
+    expect(useAppStore.getState().keyDrafts).toEqual({ stt: null, llm: null })
+  })
+
+  it('Save sends the typed key to the vault, never to the config', async () => {
+    const { setApiKey, updateConfig, getCredentialStatus } = await import('../../../lib/tauri')
+    vi.mocked(getCredentialStatus).mockResolvedValue({ stt: 'saved', llm: 'missing' })
+
+    renderSettings()
+    act(() => {
+      useAppStore.getState().setKeyDraft('stt', 'sk-fresh')
+    })
+    await waitFor(() => expect(screen.getByText('Save')).toBeDefined())
+
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(vi.mocked(setApiKey)).toHaveBeenCalledWith('stt', 'glm-asr', 'sk-fresh')
+    })
+    // The config payload that lands in settings.json carries no secret.
+    const calls = vi.mocked(updateConfig).mock.calls
+    const savedConfig = calls[calls.length - 1]?.[0]
+    expect(JSON.stringify(savedConfig)).not.toContain('sk-fresh')
+    // Drafts clear once the vault accepted the key.
+    await waitFor(() => {
+      expect(useAppStore.getState().keyDrafts).toEqual({ stt: null, llm: null })
+    })
+  })
+
+  it('keeps the draft and reports the error when the vault rejects the key', async () => {
+    const { setApiKey, updateConfig } = await import('../../../lib/tauri')
+    vi.mocked(setApiKey).mockRejectedValueOnce(new Error('keychain is locked'))
+
+    renderSettings()
+    act(() => {
+      useAppStore.getState().setKeyDraft('stt', 'sk-doomed')
+    })
+    await waitFor(() => expect(screen.getByText('Save')).toBeDefined())
+
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(screen.getByText('keychain is locked')).toBeDefined()
+    })
+    // The draft is the only copy of the key left, so it has to survive — and
+    // the config must not be written as if the save had worked.
+    expect(useAppStore.getState().keyDrafts.stt).toBe('sk-doomed')
+    expect(vi.mocked(updateConfig)).not.toHaveBeenCalled()
   })
 })
 

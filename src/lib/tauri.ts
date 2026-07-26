@@ -23,13 +23,58 @@ export async function updateConfig(config: AppConfig): Promise<void> {
   return invoke('update_config', { config })
 }
 
+// Credentials
+//
+// API keys live in the OS credential vault, never in `settings.json` and never
+// in this store. Secrets travel one way only — the frontend can write one and
+// ask whether one exists, but it cannot read one back.
+
+export type CredentialNamespace = 'stt' | 'llm'
+
+/**
+ * Whether a provider has a key — three states, not two.
+ *
+ * `unreadable` means the credential store refused or failed the read (on macOS,
+ * declining the Keychain prompt does this). It must stay distinct from
+ * `missing`: rendering it as "no key" invites the user to retype or remove a
+ * credential that is actually fine.
+ */
+export type KeyPresence = 'saved' | 'saved_unencrypted' | 'missing' | 'unreadable'
+
+export interface CredentialStatus {
+  stt: KeyPresence
+  llm: KeyPresence
+}
+
+/** Whether the two currently selected providers have a key saved. */
+export async function getCredentialStatus(
+  sttProvider: string,
+  llmProvider: string,
+): Promise<CredentialStatus> {
+  return invoke('get_credential_status', { sttProvider, llmProvider })
+}
+
+/** Save a key for one provider. An empty `apiKey` removes it. */
+export async function setApiKey(
+  namespace: CredentialNamespace,
+  provider: string,
+  apiKey: string,
+): Promise<void> {
+  return invoke('set_api_key', { namespace, provider, apiKey })
+}
+
 // Connection test
-export async function testSttConnection(apiKey: string, provider: string): Promise<boolean> {
+//
+// `apiKey` is the *unsaved* key the user is typing. Pass it to probe a
+// candidate before saving (onboarding, or re-testing after a paste); pass
+// `null` to probe whatever is already in the vault. It is never persisted as a
+// side effect of testing.
+export async function testSttConnection(apiKey: string | null, provider: string): Promise<boolean> {
   return invoke('test_stt_connection', { apiKey, provider })
 }
 
 export async function testLlmConnection(
-  apiKey: string,
+  apiKey: string | null,
   provider: string,
   baseUrl: string,
   model: string,
@@ -38,12 +83,12 @@ export async function testLlmConnection(
 }
 
 // Latency benchmark — returns round-trip time in milliseconds
-export async function benchSttConnection(apiKey: string, provider: string): Promise<number> {
+export async function benchSttConnection(apiKey: string | null, provider: string): Promise<number> {
   return invoke('bench_stt_connection', { apiKey, provider })
 }
 
 export async function benchLlmConnection(
-  apiKey: string,
+  apiKey: string | null,
   provider: string,
   baseUrl: string,
   model: string,
@@ -52,8 +97,12 @@ export async function benchLlmConnection(
 }
 
 // LLM models
-export async function fetchLlmModels(apiKey: string, baseUrl: string): Promise<string[]> {
-  return invoke('fetch_llm_models', { apiKey, baseUrl })
+export async function fetchLlmModels(
+  apiKey: string | null,
+  provider: string,
+  baseUrl: string,
+): Promise<string[]> {
+  return invoke('fetch_llm_models', { apiKey, provider, baseUrl })
 }
 
 // Hotkey

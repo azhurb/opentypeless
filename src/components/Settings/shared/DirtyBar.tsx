@@ -3,11 +3,19 @@ import { motion } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { useAppStore } from '../../../stores/appStore'
 import { updateConfig, setAutoStart } from '../../../lib/tauri'
+import { refreshCredentialStatus, writeKeyDrafts } from '../../../lib/credentials'
 
 export function useDirtyConfig() {
   const config = useAppStore((s) => s.config)
   const savedConfig = useAppStore((s) => s.savedConfig)
-  return savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig)
+  const keyDrafts = useAppStore((s) => s.keyDrafts)
+  // A typed key is an unsaved change even though it is not part of the config.
+  // `null` means the field was never touched, so a pane showing a saved key's
+  // placeholder stays clean — the placeholder is not a value.
+  const hasKeyDraft = keyDrafts.stt !== null || keyDrafts.llm !== null
+  return (
+    savedConfig !== null && (hasKeyDraft || JSON.stringify(config) !== JSON.stringify(savedConfig))
+  )
 }
 
 type SaveResult = 'idle' | 'success' | 'error'
@@ -17,6 +25,7 @@ export function DirtyBar() {
   const savedConfig = useAppStore((s) => s.savedConfig)
   const resetConfig = useAppStore((s) => s.resetConfig)
   const setSavedConfig = useAppStore((s) => s.setSavedConfig)
+  const clearKeyDrafts = useAppStore((s) => s.clearKeyDrafts)
   const [saving, setSaving] = useState(false)
   const [saveResult, setSaveResult] = useState<SaveResult>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -27,12 +36,18 @@ export function DirtyBar() {
     setSaveResult('idle')
     setErrorMsg('')
     try {
+      // Keys go to the vault first. If the credential store rejects one, the
+      // error surfaces here with the draft still in the field, rather than
+      // after a "saved" confirmation that quietly dropped the key.
+      await writeKeyDrafts()
       await updateConfig(config)
       // Sync system auto-start only when the value actually changed
       if (savedConfig?.auto_start !== config.auto_start) {
         await setAutoStart(config.auto_start)
       }
       setSavedConfig(config)
+      clearKeyDrafts()
+      await refreshCredentialStatus()
       setSaveResult('success')
       setTimeout(() => {
         setSaveResult('idle')
@@ -50,6 +65,7 @@ export function DirtyBar() {
     setSaveResult('idle')
     setErrorMsg('')
     resetConfig()
+    clearKeyDrafts()
   }
 
   const bgClass =

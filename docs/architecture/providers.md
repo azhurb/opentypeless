@@ -81,7 +81,7 @@ Match arms currently registered in `stt::create_provider`:
 
 ### Connection tests and benchmarks
 
-`test_stt_connection` and `bench_stt_connection` in `lib.rs` probe a key without running a dictation. Deepgram and AssemblyAI use a cheap authenticated `GET`. The Whisper-compatible providers upload a 0.1 s silent WAV, sharing endpoint/model/extra-field resolution through `whisper_compat_test_target`.
+`test_stt_connection` and `bench_stt_connection` in `lib.rs` probe a key without running a dictation. The key comes either from the command's `api_key: Option<String>` (a candidate the user typed but has not saved) or, when that is `None`, from the credential vault — see [Storage → Credentials](storage.md#credentials-os-credential-vault). Probing never persists the candidate. Deepgram and AssemblyAI use a cheap authenticated `GET`. The Whisper-compatible providers upload a 0.1 s silent WAV, sharing endpoint/model/extra-field resolution through `whisper_compat_test_target`.
 
 `openai-whisper` is the exception: OpenAI bills every `/audio/transcriptions` call, so the upload probe charged the user to verify their own key — a real annoyance in a BYOK app. It now reads `GET /v1/models/whisper-1` instead, which proves the key is accepted for free. The other Whisper-compatible providers keep the upload probe. One consequence worth knowing: the benchmark number shown for `openai-whisper` is now a model-read round-trip rather than a transcription round-trip, so it is not comparable with the other Whisper-compatible providers' figures. **Needs confirmation**: whether GLM-ASR, Groq and SiliconFlow expose an equivalent per-model endpoint, and whether their transcription calls are billed the same way — if both hold, they should move to the same probe.
 

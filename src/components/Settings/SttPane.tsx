@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../stores/appStore'
 import { STT_PROVIDERS, LANGUAGES } from '../../lib/constants'
 import { benchSttConnection } from '../../lib/tauri'
+import { useApiKeyField } from '../../hooks/useApiKeyField'
 import { FormField } from './shared/FormField'
 import { CheckCircle2, XCircle, Loader2, Check } from 'lucide-react'
 
@@ -12,13 +13,14 @@ export function SttPane() {
   const setSttTestStatus = useAppStore((s) => s.setSttTestStatus)
   const sttLatencyMs = useAppStore((s) => s.sttLatencyMs)
   const setSttLatencyMs = useAppStore((s) => s.setSttLatencyMs)
+  const apiKey = useApiKeyField('stt')
   const { t } = useTranslation()
 
   const handleTest = async () => {
     setSttTestStatus('testing')
     setSttLatencyMs(null)
     try {
-      const ms = await benchSttConnection(config.stt_api_key, config.stt_provider)
+      const ms = await benchSttConnection(apiKey.probeKey, config.stt_provider)
       console.log('[STT Test] Received latency:', ms, 'type:', typeof ms)
       setSttLatencyMs(ms)
       setSttTestStatus('success')
@@ -52,18 +54,24 @@ export function SttPane() {
         <div className="flex gap-2">
           <input
             type="password"
-            value={config.stt_api_key}
+            value={apiKey.value}
             onChange={(e) => {
-              updateConfig({ stt_api_key: e.target.value })
+              apiKey.onChange(e.target.value)
               setSttTestStatus('idle')
               setSttLatencyMs(null)
             }}
-            placeholder={t('settings.enterApiKey')}
+            placeholder={
+              apiKey.isUnreadable
+                ? t('settings.apiKeyUnreadable')
+                : apiKey.hasSavedKey
+                  ? t('settings.apiKeySaved')
+                  : t('settings.enterApiKey')
+            }
             className="flex-1 px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
           />
           <button
             onClick={handleTest}
-            disabled={!config.stt_api_key || sttTestStatus === 'testing'}
+            disabled={!apiKey.canTest || sttTestStatus === 'testing'}
             className="px-4 py-2.5 bg-accent text-white rounded-[10px] text-[13px] border-none cursor-pointer hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
           >
             {sttTestStatus === 'testing' && <Loader2 size={14} className="animate-spin" />}
@@ -81,7 +89,34 @@ export function SttPane() {
             <XCircle size={13} /> {t('settings.connectionFailed')}
           </p>
         )}
-        <p className="text-[11px] text-text-tertiary mt-1.5">{t('settings.storedLocally')}</p>
+        {apiKey.isUnreadable && (
+          <p className="flex items-start gap-1 text-[12px] text-warning mt-2">
+            <XCircle size={13} className="flex-shrink-0 mt-0.5" />
+            {t('settings.apiKeyUnreadableHint')}
+          </p>
+        )}
+        {apiKey.isUnencrypted && (
+          <p className="flex items-start gap-1 text-[12px] text-warning mt-2">
+            <XCircle size={13} className="flex-shrink-0 mt-0.5" />
+            {t('settings.apiKeyUnencrypted')}
+          </p>
+        )}
+        <div className="flex items-center justify-between gap-3 mt-1.5">
+          <p className="text-[11px] text-text-tertiary">{t('settings.storedLocally')}</p>
+          {apiKey.hasSavedKey && (
+            <button
+              type="button"
+              onClick={() => {
+                apiKey.clear()
+                setSttTestStatus('idle')
+                setSttLatencyMs(null)
+              }}
+              className="flex-shrink-0 text-[11px] text-text-tertiary hover:text-error bg-transparent border-none cursor-pointer p-0 transition-colors"
+            >
+              {t('settings.apiKeyRemove')}
+            </button>
+          )}
+        </div>
       </FormField>
 
       <FormField label={t('settings.sttLanguages')}>

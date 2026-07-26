@@ -1,6 +1,48 @@
 # Keychain Migration — API Keys Out Of `settings.json`
 
-Written 2026-07-26 as a handoff brief. Nothing implemented yet.
+Written 2026-07-26 as a handoff brief; **landed the same day** (#36). Kept as history for the
+write-only-vs-encrypted-at-rest analysis, which is the reasoning behind the command surface
+now documented in [`architecture/storage.md`](../../architecture/storage.md#credentials-os-credential-vault).
+
+## Outcome
+
+Everything in scope shipped: `credentials.rs` with the vault trait, `SystemCredentialVault`,
+versioned payload and `MemoryVault`; per-provider credentials; the legacy migration with
+write-then-clear ordering; the five commands reworked; both Settings panes and both
+onboarding steps. Four notes where the implementation diverged from or corrected the brief:
+
+- **Option A needed one refinement.** "Drop the `api_key` parameter and read from the vault"
+  breaks the flows the Test button exists for: onboarding tests a key before anything is
+  saved, and `LlmPane` populates the model dropdown from the key as you type. In Settings,
+  vault-only would have probed the *old* key right after pasting a new one — misleading
+  rather than merely broken. The commands take `api_key: Option<String>` instead: `Some`
+  probes an unsaved candidate (never persisted), `None` reads the vault. The security
+  property the brief wanted is unchanged — the vault never hands a secret *back*.
+- **The brief missed half the migration hazard.** Clearing plaintext only after a confirmed
+  vault write is necessary but not sufficient: because `AppConfig` no longer models those
+  fields, serializing it drops them, so a locked vault at launch followed by *any* Settings
+  save would erase the key anyway. `ConfigManager::pending_legacy_secrets` re-attaches
+  un-vaulted keys on every save until a later launch succeeds.
+- **The brief's scope table missed the onboarding steps.** `SttSetupStep.tsx` and
+  `LlmSetupStep.tsx` bind key inputs and call the probe commands exactly like the Settings
+  panes do; they needed the same treatment.
+- **Masked *value* rejected in favour of a placeholder over an empty field.** The brief said
+  "masked field", but a fake value has to be compared against real config by the dirty bar —
+  which is precisely the `0.5.0` phantom-dirty bug it warned about. `draft === null` means
+  untouched, so an untouched pane is unambiguously clean.
+
+Two brief assumptions that did not survive contact:
+
+- **`keyring` 4.1.5 is a rewrite** (`keyring-core`, explicit store registration) and dropped
+  the `linux-native-sync-persistent` feature. Pinned to `3.6` as the brief specified.
+- **`linux-native-sync-persistent` does not avoid Secret Service** — it is
+  `linux-native + sync-secret-service`, so it uses keyutils for the session and Secret
+  Service for persistence, and needs `libdbus-1-dev` at build time. Added to both workflows.
+  What it avoids is the *async* D-Bus stack and a second runtime alongside Tokio. `cargo audit`
+  output is byte-identical to `main`.
+
+Still unverified: the manual pass below. CI covers the three-OS build and the test suite, not
+a real Keychain round trip.
 
 ## Goal
 

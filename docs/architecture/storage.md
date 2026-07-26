@@ -1,14 +1,21 @@
 # Storage
 
-OpenTypeless uses local app data for config, history, dictionary, and window/onboarding state. See [Feature map](../domain/features.md) and [Pipeline](pipeline.md) for how stored values feed user-facing behavior.
+OpenTypeless uses local app data for config, history, dictionary, and window/onboarding state, plus the OS credential vault for provider API keys. See [Feature map](../domain/features.md) and [Pipeline](pipeline.md) for how stored values feed user-facing behavior.
 
-Evidence: `src-tauri/src/storage/mod.rs`, `src-tauri/migrations/001_init.sql`, `src/lib/tauri.ts`, `src/App.tsx`.
+Evidence: `src-tauri/src/storage/mod.rs`, `src-tauri/src/credentials.rs`, `src-tauri/migrations/001_init.sql`, `src/lib/tauri.ts`, `src/lib/credentials.ts`, `src/App.tsx`.
+
+## Where secrets live
+
+**API keys are never written to `settings.json`, and never sent to the webview.** They live
+in the OS credential vault — see [Credentials](#credentials-os-credential-vault). Everything
+else on this page is non-secret configuration.
 
 ## Config (`tauri-plugin-store`)
 
 - File: `settings.json` in the OS app-data directory.
 - Keys in that file: `app_config` (Rust `storage::AppConfig`), `window_state`, `onboarding_completed` (set from the frontend).
 - Manager: `ConfigManager` caches the deserialized config in memory and writes updates back to the store.
+- `AppConfig` holds no secrets. It carries `stt_provider` / `llm_provider`, which are also the keys under which credentials are filed.
 
 ### `AppConfig` defaults
 
@@ -35,11 +42,12 @@ If you add or change a default, update this table in the same PR.
 
 ### Config migrations
 
-`ConfigManager::load` runs `migrate_legacy_config` on the raw JSON value before deserializing into `AppConfig`. The migration is idempotent and so far handles one case:
+`ConfigManager::load` runs two migrations on the raw JSON value before deserializing into `AppConfig`. Both are idempotent, and a mutated value is written back on the same load.
 
-- Pre-multi-language installs persisted `stt_language: String` (with the sentinel `"multi"`). Load-time migration converts `"multi"` / `""` to `stt_languages = []` and any other code to `[code]`, then removes the legacy key. The migrated config is written back on the same load.
+- `migrate_legacy_config` — pre-multi-language installs persisted `stt_language: String` (with the sentinel `"multi"`). Converts `"multi"` / `""` to `stt_languages = []` and any other code to `[code]`, then removes the legacy key.
+- `credentials::migrate_legacy_config_secrets` — moves plaintext `stt_api_key` / `llm_api_key` into the credential vault. Covered under [Credentials](#credentials-os-credential-vault).
 
-Add new migrations to `migrate_legacy_config` rather than re-mapping fields downstream; tests live in `storage::config_migration_tests`.
+Add new migrations to `migrate_legacy_config` rather than re-mapping fields downstream; tests live in `storage::config_migration_tests` and `credentials::tests`.
 
 ### Load failures fail open, loudly
 
@@ -49,6 +57,154 @@ opted out of, including `history_enabled`, and if the value also needed legacy m
 defaults are then written back over their settings. It therefore logs at `error` with the
 serde message. If you add another privacy-relevant flag, this is the fail-open path to think
 about.
+
+## Credentials (OS credential vault)
+
+Provider API keys live in `src-tauri/src/credentials.rs`, backed by the `keyring` crate:
+macOS Keychain, Windows Credential Manager, Linux Secret Service. Before this, they were
+plain strings in `settings.json` — for a BYOK, local-first app that was the widest gap
+between what the README claims and what the app did.
+
+- **Service name**: `com.opentypeless.app` (matches the `tauri.conf.json` bundle identifier,
+  so entries are attributable in Keychain Access / Credential Manager).
+- **Account**: `<namespace>:<provider>` — `stt:deepgram`, `llm:openrouter`. Changing this
+  format orphans every entry a previous version wrote.
+- **Payload**: JSON `{ "version": 1, "secret": "…" }`. The version stamp is forward
+  compatibility only; a bare (hand-written) secret is also accepted on read.
+
+### Credentials are per provider
+
+Keys are filed under `(namespace, provider)`, not per namespace. Switching STT provider and
+switching back remembers the earlier key instead of overwriting it, and `siliconflow` — which
+is both an STT and an LLM provider id — gets two independent slots.
+
+### Keys are write-only from the webview's perspective
+
+A secret travels one way: the user types it, `set_api_key` puts it in the vault, and nothing
+ever hands it back. `AppConfig` has no key fields, the Zustand store has no key fields, and
+`get_config` returns no secret. What the frontend can ask is *whether* a key exists, via
+`get_credential_status(sttProvider, llmProvider)`, which returns a `KeyPresence` per
+namespace rather than the secret.
+
+Consequences worth knowing:
+
+| Concern | How it works |
+| --- | --- |
+| Store unavailable | Falls back to an unencrypted `credentials.json`, reported as `saved_unencrypted` and shown as a warning. See [above](#the-credential-store-may-never-break-the-app). |
+| Settings / onboarding input | The field is genuinely **empty** with a "saved" placeholder — not a masked value. `keyDrafts[ns] === null` means untouched, so the unsaved-changes bar cannot mistake a placeholder for an edit (the `0.5.0` bug in `CHANGELOG.md`). |
+| Removing a key | "Remove" stages an empty-string draft; Save calls `set_api_key` with `""`, which deletes the entry. It is a pending change like any other setting, not an immediate side effect. |
+| Testing a key | `test_*` / `bench_*` / `fetch_llm_models` take `api_key: Option<String>`. `Some(candidate)` probes an unsaved key — required by onboarding, where nothing is saved yet, and by Settings, where probing the stored key right after pasting a new one would report on the wrong credential. `None` means "use the vault". A candidate is never persisted as a side effect of testing. |
+| `fetch_llm_models` | Gained a `provider` parameter, purely to name the vault entry to fall back on. |
+| Onboarding gate | `should_show_window_on_launch` takes "the vault has no entry for the selected STT provider" instead of `stt_api_key.is_empty()`. An unreadable vault counts as no key, erring toward showing onboarding rather than starting hidden and broken. |
+| Logging | `pipeline.rs` logs key **length** only. Never log the value. |
+
+### Legacy plaintext migration
+
+`migrate_legacy_config_secrets` runs inside `ConfigManager::load`. For each of
+`stt_api_key` / `llm_api_key` it writes the secret to the vault under the currently selected
+provider, then removes the plaintext field.
+
+**The ordering is load-bearing: the plaintext is cleared only after the vault write returns
+`Ok`.** A locked, unavailable, or denied vault leaves the config exactly as it was, so the
+user keeps a working key and the migration retries next launch. Clearing first would destroy
+the only copy of a secret the user may never have written down.
+
+Because `AppConfig` no longer models those fields, serializing it would drop them — so a
+launch with a locked vault followed by *any* Settings save would erase the key anyway.
+`ConfigManager` therefore holds `pending_legacy_secrets`: whatever the migration could not
+vault is re-attached by every `save` until a later launch succeeds.
+
+Other cases: an empty legacy field is dropped without touching the vault; an existing vault
+entry wins over stale plaintext (and the plaintext is dropped); a missing `*_provider` leaves
+the plaintext in place, since there is nothing to file it under.
+
+### The credential store may never break the app
+
+`FallbackVault` wraps the real vault and falls back to `FileVault` — a `0600`
+JSON file at `<app_data_dir>/credentials.json` — when the store is genuinely
+unavailable.
+
+This is not optional polish. On Linux, `keyring`'s `linux-native-sync-persistent`
+writes keyutils *and* Secret Service, and **reverts the keyutils write if the
+Secret Service write fails** (verified in `keyring-3.6.3/src/keyutils_persistent.rs`).
+On a minimal WM or headless box with no Secret Service provider, a fresh install
+could not save an API key at all — the app would be unusable, which is strictly
+worse than the plaintext config this change replaced.
+
+The rule: the OS credential store is the default and strongly preferred home,
+but it may never be the reason the app stops working.
+
+- A key only reaches the file when the store **refuses the write**.
+- **The contents are not encrypted**, so `get_credential_status` reports
+  `saved_unencrypted` for it and both Settings panes show a visible warning.
+  Storing a secret in the clear silently would be worse than the old
+  `settings.json`, because it would be invisible.
+- If the store later starts working, the next save **promotes** the key into it
+  and deletes the cleartext copy.
+- `delete` always clears both, so a removed key cannot survive in the other.
+- A read error with no fallback copy still surfaces as an error, never as
+  "no key set".
+
+### Reads are cached for the session
+
+`CachingVault` wraps the real vault and remembers secrets it has already read,
+so a session touches the OS credential store roughly twice instead of twice per
+dictation (the pipeline resolves an STT key and an LLM key every time).
+
+This is a macOS usability fix. A Keychain prompt offers Deny / Allow / **Always
+Allow**, and plain "Allow" grants exactly one access — so without the cache, a
+user who did not pick "Always Allow" was re-prompted on every dictation, which
+reasonably reads as something malicious.
+
+Only successful reads are cached. Errors are not, so a locked keychain keeps
+reporting itself instead of being remembered as a failure for the session;
+misses are not, so a key added out of band is still picked up. `write` and
+`delete` update the cache after the store accepts the change, never before.
+
+### When macOS actually prompts
+
+The Keychain ACL matches on the app's **designated requirement**, which differs
+by how the build is signed:
+
+| Build | Designated requirement | Prompt behavior |
+| --- | --- | --- |
+| Release (`.github/workflows/release.yml` imports the "OpenTypeless Release" cert) | `identifier "com.opentypeless.app" and certificate leaf = H"…"` | Stable across versions — an update does **not** re-prompt |
+| Local `npm run tauri build` (no cert) | `cdhash H"…"` | Changes every rebuild, so each local rebuild prompts once |
+
+So repeated prompts while developing are expected and are not a defect. They
+would only reach users if the release signing certificate were rotated.
+
+Windows and Linux have no equivalent per-app prompt: Credential Manager is
+scoped to the user account, and Secret Service unlocks with the login session.
+A Linux box with no Secret Service provider at all (minimal WM, headless) cannot
+use the vault; that is what the fallback above is for.
+
+### Vault errors are not "no key"
+
+`CredentialVault::read` returns `Ok(None)` for "no entry" and `Err` for "could not reach the
+vault". Collapsing the two turns a locked keychain into the pipeline's misleading "API key is
+not configured", which sends the user to re-enter a key that is already there. The STT path
+surfaces a distinct message and aborts; the LLM path logs a warning and skips polish, because
+failing the dictation outright would throw away a transcript the user already spoke.
+
+The same distinction reaches the UI. `get_credential_status` returns a four-state
+`KeyPresence` per namespace — `saved` / `saved_unencrypted` / `missing` /
+`unreadable` — not a boolean. Reporting an
+unreadable vault as `missing` renders an empty field, which invites the user to retype the key
+or press Remove, destroying a credential that was fine. On macOS that is one declined prompt
+away. The `unreadable` state shows an explicit "couldn't read your keychain" message and
+hides Remove, since offering to delete a key whose existence is unknown is not a safe option.
+
+### Testing
+
+`CredentialVault` is a trait so tests can substitute `MemoryVault`. **Tests must never touch
+the real vault** — CI runs `cargo test` on three OSes, where a real vault either prompts for
+authorization or fails on a headless runner. `MemoryVault::failing(msg)` exercises the
+vault-rejects-the-write path.
+
+The Linux build needs `libdbus-1-dev` (installed by both workflows in `.github/workflows/`);
+the `linux-native-sync-persistent` feature uses kernel keyutils for the session and Secret
+Service for persistence across reboots.
 
 ## SQLite (`<app_data_dir>/opentypeless.db`)
 

@@ -8,6 +8,7 @@ use tokio::sync::Notify;
 
 use crate::app_detector;
 use crate::audio::{AudioCaptureHandle, AudioConfig};
+use crate::credentials::{CredentialId, SharedVault};
 use crate::llm::{self, LlmConfig, PolishRequest};
 use crate::output;
 use crate::storage;
@@ -221,6 +222,11 @@ impl PipelineHandle {
             shared_client,
             pipeline_lock: tokio::sync::Mutex::new(()),
         }
+    }
+
+    /// The app-wide credential vault, from Tauri managed state.
+    fn vault(&self) -> SharedVault {
+        self.app_handle.state::<SharedVault>().inner().clone()
     }
 
     fn set_state(&self, new_state: PipelineState) {
@@ -526,15 +532,40 @@ impl PipelineHandle {
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(dict_words);
 
+        // The key lives in the OS credential vault, not in the config.
+        let stt_api_key = match self
+            .vault()
+            .read(&CredentialId::stt(&config_data.stt_provider))
+        {
+            Ok(Some(key)) => key,
+            Ok(None) => String::new(),
+            Err(e) => {
+                // A vault that cannot be read is not the same problem as a key
+                // that was never set, and telling the user to go re-enter a key
+                // that is already there sends them the wrong way.
+                tracing::error!(
+                    "failed to read the STT key from the credential vault: {:#}",
+                    e
+                );
+                let _ = self.app_handle.emit(
+                    "pipeline:error",
+                    "Could not read the STT API key from the system credential store. \
+                     Unlock your keychain and try again.",
+                );
+                self.cleanup_failed_start();
+                return Ok(());
+            }
+        };
+
         tracing::debug!(
             "Pipeline using config: stt_provider={}, stt_key_len={}, stt_langs={:?}",
             config_data.stt_provider,
-            config_data.stt_api_key.len(),
+            stt_api_key.len(),
             config_data.stt_languages
         );
 
         // Guard: empty API key — bail and tear down the running capture
-        if config_data.stt_api_key.is_empty() {
+        if stt_api_key.is_empty() {
             let _ = self.app_handle.emit(
                 "pipeline:error",
                 "STT API key is not configured. Please set it in Settings → Speech Recognition.",
@@ -548,7 +579,7 @@ impl PipelineHandle {
         // into audio_rx the whole time, so the dead window the user used to
         // see has now been folded into a pre-buffer.
         let stt_config = SttConfig {
-            api_key: config_data.stt_api_key.clone(),
+            api_key: stt_api_key,
             languages: config_data.stt_languages.clone(),
             smart_format: true,
             sample_rate: 16000,
@@ -759,10 +790,30 @@ impl PipelineHandle {
         // isn't blocked by the long stt_done wait that follows.
         drop(guard);
 
-        // Pre-build LLM provider while STT is still processing
-        let pre_llm = if config.polish_enabled && !config.llm_api_key.is_empty() {
+        // Pre-build LLM provider while STT is still processing.
+        //
+        // A vault read failure here is logged and treated as "no key": polish is
+        // optional, and failing the dictation outright would throw away a
+        // transcript the user already spoke for the sake of a formatting pass.
+        let llm_api_key = if config.polish_enabled {
+            match self.vault().read(&CredentialId::llm(&config.llm_provider)) {
+                Ok(key) => key.unwrap_or_default(),
+                Err(e) => {
+                    tracing::warn!(
+                        "failed to read the LLM key from the credential vault, \
+                         skipping polish for this dictation: {:#}",
+                        e
+                    );
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
+        let pre_llm = if config.polish_enabled && !llm_api_key.is_empty() {
             let llm_config = LlmConfig {
-                api_key: config.llm_api_key.clone(),
+                api_key: llm_api_key,
                 model: config.llm_model.clone(),
                 base_url: config.llm_base_url.clone(),
                 max_tokens: 4096,

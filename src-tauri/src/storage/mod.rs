@@ -1,18 +1,24 @@
+use crate::credentials::{migrate_legacy_config_secrets, CredentialVault, LEGACY_SECRET_FIELDS};
 use anyhow::Result;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri_plugin_store::StoreExt;
 
+/// User settings, persisted to `settings.json` as the `app_config` key.
+///
+/// Deliberately holds **no secrets**. Provider API keys live in the OS
+/// credential vault (see [`crate::credentials`]); the `stt_api_key` /
+/// `llm_api_key` fields this struct used to carry were plaintext on disk, and
+/// `migrate_legacy_config_secrets` moves any left over from an older install.
+/// Serde ignores the leftover fields, so an un-migrated config still parses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub stt_provider: String,
-    pub stt_api_key: String,
     pub stt_languages: Vec<String>,
     pub llm_provider: String,
-    pub llm_api_key: String,
     pub llm_model: String,
     pub llm_base_url: String,
     pub polish_enabled: bool,
@@ -39,10 +45,8 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             stt_provider: "glm-asr".to_string(),
-            stt_api_key: String::new(),
             stt_languages: Vec::new(),
             llm_provider: "openrouter".to_string(),
-            llm_api_key: String::new(),
             llm_model: "google/gemini-2.5-flash".to_string(),
             llm_base_url: "https://openrouter.ai/api/v1".to_string(),
             polish_enabled: true,
@@ -98,13 +102,27 @@ fn migrate_legacy_config(value: &mut serde_json::Value) -> bool {
 pub struct ConfigManager {
     app_handle: tauri::AppHandle,
     cache: Mutex<Option<AppConfig>>,
+    /// Held so `load` can run the plaintext-secret migration against the same
+    /// vault the rest of the app reads from.
+    vault: Arc<dyn CredentialVault>,
+    /// Legacy plaintext secrets the vault refused to accept, re-attached by
+    /// every `save`.
+    ///
+    /// `AppConfig` no longer models these fields, so serializing it drops them.
+    /// Without this, a launch where the vault is locked followed by any Settings
+    /// save (changing the theme is enough) would erase the user's only copy of a
+    /// key that never made it into the vault. The next launch retries the
+    /// migration and this empties out.
+    pending_legacy_secrets: Mutex<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl ConfigManager {
-    pub fn new(app_handle: tauri::AppHandle) -> Self {
+    pub fn new(app_handle: tauri::AppHandle, vault: Arc<dyn CredentialVault>) -> Self {
         Self {
             app_handle,
             cache: Mutex::new(None),
+            vault,
+            pending_legacy_secrets: Mutex::new(serde_json::Map::new()),
         }
     }
 
@@ -117,7 +135,30 @@ impl ConfigManager {
             Ok(store) => match store.get("app_config") {
                 Some(val) => {
                     let mut v = val.clone();
-                    let mutated = migrate_legacy_config(&mut v);
+                    let mut mutated = migrate_legacy_config(&mut v);
+
+                    // Move any plaintext API keys into the credential vault.
+                    // Anything the vault would not take stays in `v` and is
+                    // remembered so `save` re-attaches it.
+                    let secrets = migrate_legacy_config_secrets(self.vault.as_ref(), &mut v);
+                    mutated |= secrets.config_mutated;
+                    if !secrets.migrated.is_empty() {
+                        tracing::info!(
+                            "moved {} plaintext API key(s) into the credential vault: {}",
+                            secrets.migrated.len(),
+                            secrets.migrated.join(", ")
+                        );
+                    }
+                    if !secrets.failed.is_empty() {
+                        tracing::warn!(
+                            "could not vault {} API key(s), leaving them in settings.json \
+                             and retrying next launch: {}",
+                            secrets.failed.len(),
+                            secrets.failed.join(", ")
+                        );
+                    }
+                    self.remember_pending_legacy_secrets(&v);
+
                     let parsed = match serde_json::from_value::<AppConfig>(v) {
                         Ok(config) => config,
                         Err(e) => {
@@ -157,6 +198,23 @@ impl ConfigManager {
         Ok(config)
     }
 
+    /// Snapshot the legacy secret fields still present after the migration ran,
+    /// so `save` can put them back. Empty on the happy path.
+    fn remember_pending_legacy_secrets(&self, value: &serde_json::Value) {
+        let mut pending = serde_json::Map::new();
+        if let Some(obj) = value.as_object() {
+            for field in LEGACY_SECRET_FIELDS {
+                if let Some(v) = obj.get(field) {
+                    pending.insert(field.to_string(), v.clone());
+                }
+            }
+        }
+        *self
+            .pending_legacy_secrets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = pending;
+    }
+
     pub async fn save(&self, config: &AppConfig) -> Result<()> {
         *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(config.clone());
 
@@ -164,7 +222,20 @@ impl ConfigManager {
             .app_handle
             .store("settings.json")
             .map_err(|e| anyhow::anyhow!("Failed to open store: {}", e))?;
-        let val = serde_json::to_value(config)?;
+        let mut val = serde_json::to_value(config)?;
+        // Carry forward any plaintext key the vault rejected — see
+        // `pending_legacy_secrets`.
+        {
+            let pending = self
+                .pending_legacy_secrets
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let (Some(obj), false) = (val.as_object_mut(), pending.is_empty()) {
+                for (field, secret) in pending.iter() {
+                    obj.insert(field.clone(), secret.clone());
+                }
+            }
+        }
         store.set("app_config", val);
         store.save().map_err(|e| anyhow::anyhow!("{}", e))?;
 
