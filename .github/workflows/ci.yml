@@ -5,6 +5,12 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Escape hatch. GitHub disables workflows on forks by default, and the enable
+  # action exists only as a banner in the Actions tab — not in Settings, and with
+  # no REST API. While that is un-enabled, the two triggers above never fire and
+  # this is the only way to run CI at all. `release.yml` already has one; without
+  # the same here, CI's total absence stayed invisible (it had 0 runs, ever).
+  workflow_dispatch:
 
 jobs:
   check-frontend:
