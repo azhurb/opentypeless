@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { LlmPane } from '../LlmPane'
 import * as tauri from '../../../lib/tauri'
+import type { KeyPresence } from '../../../lib/tauri'
 
 // Mock Tauri
 vi.mock('../../../lib/tauri')
@@ -51,7 +52,7 @@ const mockAppStore = {
   // is typing, `credentialStatus` is whether the vault already has one.
   keyDrafts: { stt: null as string | null, llm: null as string | null },
   setKeyDraft: vi.fn(),
-  credentialStatus: { stt: false, llm: false },
+  credentialStatus: { stt: 'missing' as KeyPresence, llm: 'missing' as KeyPresence },
   llmTestStatus: 'idle' as 'idle' | 'testing' | 'success' | 'error',
   setLlmTestStatus: vi.fn(),
   llmLatencyMs: null as number | null,
@@ -82,7 +83,7 @@ describe('LlmPane', () => {
       target_lang: 'en',
     }
     mockAppStore.keyDrafts = { stt: null, llm: null }
-    mockAppStore.credentialStatus = { stt: false, llm: false }
+    mockAppStore.credentialStatus = { stt: 'missing', llm: 'missing' }
     mockAppStore.llmTestStatus = 'idle'
     mockAppStore.llmLatencyMs = null
     mockAppStore.llmModels = []
@@ -139,14 +140,14 @@ describe('LlmPane', () => {
     })
 
     it('shows the saved placeholder over an empty field when a key is in the vault', () => {
-      mockAppStore.credentialStatus.llm = true
+      mockAppStore.credentialStatus.llm = 'saved'
       render(<LlmPane />)
       const input = screen.getByPlaceholderText('Key saved') as HTMLInputElement
       expect(input.value).toBe('')
     })
 
     it('Remove stages an empty draft rather than deleting immediately', () => {
-      mockAppStore.credentialStatus.llm = true
+      mockAppStore.credentialStatus.llm = 'saved'
       render(<LlmPane />)
 
       fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
@@ -206,7 +207,7 @@ describe('LlmPane', () => {
       const mockBenchLlm = vi.mocked(tauri.benchLlmConnection)
       mockBenchLlm.mockResolvedValue(187)
 
-      mockAppStore.credentialStatus.llm = true
+      mockAppStore.credentialStatus.llm = 'saved'
       render(<LlmPane />)
 
       fireEvent.click(screen.getByRole('button', { name: /test/i }))

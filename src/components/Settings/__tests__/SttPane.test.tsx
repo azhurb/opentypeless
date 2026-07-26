@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { SttPane } from '../SttPane'
 import * as tauri from '../../../lib/tauri'
+import type { KeyPresence } from '../../../lib/tauri'
 
 // Mock Tauri
 vi.mock('../../../lib/tauri')
@@ -18,6 +19,8 @@ vi.mock('react-i18next', () => ({
         'settings.enterApiKey': 'Enter API Key',
         'settings.apiKeySaved': 'Key saved',
         'settings.apiKeyRemove': 'Remove',
+        'settings.apiKeyUnreadable': 'Key unreadable',
+        'settings.apiKeyUnreadableHint': 'Unlock your keychain',
         'settings.connectionSuccess': 'Connection successful',
         'settings.connectionFailed': 'Connection failed',
         'settings.storedLocally': 'Stored locally',
@@ -42,7 +45,7 @@ const mockAppStore = {
   // is typing, `credentialStatus` is whether the vault already has one.
   keyDrafts: { stt: null as string | null, llm: null as string | null },
   setKeyDraft: vi.fn(),
-  credentialStatus: { stt: false, llm: false },
+  credentialStatus: { stt: 'missing' as KeyPresence, llm: 'missing' as KeyPresence },
   sttTestStatus: 'idle' as 'idle' | 'testing' | 'success' | 'error',
   setSttTestStatus: vi.fn(),
   sttLatencyMs: null as number | null,
@@ -65,7 +68,7 @@ describe('SttPane', () => {
       stt_languages: ['en'],
     }
     mockAppStore.keyDrafts = { stt: null, llm: null }
-    mockAppStore.credentialStatus = { stt: false, llm: false }
+    mockAppStore.credentialStatus = { stt: 'missing', llm: 'missing' }
     mockAppStore.sttTestStatus = 'idle'
     mockAppStore.sttLatencyMs = null
     vi.clearAllMocks()
@@ -120,7 +123,7 @@ describe('SttPane', () => {
     })
 
     it('shows the saved placeholder over an empty field when a key is in the vault', () => {
-      mockAppStore.credentialStatus.stt = true
+      mockAppStore.credentialStatus.stt = 'saved'
       const { container } = render(<SttPane />)
       const input = container.querySelector('input[type="password"]') as HTMLInputElement
       // Empty value, not a masked one — a fake value would read as an unsaved
@@ -130,7 +133,7 @@ describe('SttPane', () => {
     })
 
     it('offers Remove only while a saved key is untouched', () => {
-      mockAppStore.credentialStatus.stt = true
+      mockAppStore.credentialStatus.stt = 'saved'
       const { rerender } = render(<SttPane />)
       expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
 
@@ -139,8 +142,23 @@ describe('SttPane', () => {
       expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
     })
 
+    it('says so when the credential store could not be read', () => {
+      // Declining the macOS keychain prompt fails the read. Rendering that as
+      // "no key set" invites the user to retype or Remove a key that is fine.
+      mockAppStore.credentialStatus.stt = 'unreadable'
+      const { container } = render(<SttPane />)
+
+      const input = container.querySelector('input[type="password"]') as HTMLInputElement
+      expect(input.placeholder).toBe('Key unreadable')
+      expect(screen.getByText('Unlock your keychain')).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Remove' }),
+        'must not offer to delete a key whose existence is unknown',
+      ).not.toBeInTheDocument()
+    })
+
     it('Remove stages an empty draft rather than deleting immediately', () => {
-      mockAppStore.credentialStatus.stt = true
+      mockAppStore.credentialStatus.stt = 'saved'
       render(<SttPane />)
 
       fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
@@ -166,14 +184,14 @@ describe('SttPane', () => {
     })
 
     it('test button is enabled when only a saved key exists', () => {
-      mockAppStore.credentialStatus.stt = true
+      mockAppStore.credentialStatus.stt = 'saved'
       render(<SttPane />)
       const button = screen.getByRole('button', { name: /test/i })
       expect(button).not.toBeDisabled()
     })
 
     it('test button is disabled when the draft was cleared for removal', () => {
-      mockAppStore.credentialStatus.stt = true
+      mockAppStore.credentialStatus.stt = 'saved'
       mockAppStore.keyDrafts.stt = ''
       render(<SttPane />)
       const button = screen.getByRole('button', { name: /test/i })
@@ -211,7 +229,7 @@ describe('SttPane', () => {
       const mockBenchStt = vi.mocked(tauri.benchSttConnection)
       mockBenchStt.mockResolvedValue(234)
 
-      mockAppStore.credentialStatus.stt = true
+      mockAppStore.credentialStatus.stt = 'saved'
       render(<SttPane />)
 
       fireEvent.click(screen.getByRole('button', { name: /test/i }))

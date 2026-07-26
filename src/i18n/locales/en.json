@@ -130,6 +130,8 @@
     "enterApiKey": "Enter API Key...",
     "apiKeySaved": "•••••••••••••  saved in your system keychain",
     "apiKeyRemove": "Remove",
+    "apiKeyUnreadable": "Couldn’t read your keychain — your saved key may still be there",
+    "apiKeyUnreadableHint": "Unlock your login keychain and reopen Settings. Entering a key here replaces whatever is stored.",
     "test": "Test",
     "connectionSuccess": "Connection successful",
     "connectionFailed": "Connection failed",

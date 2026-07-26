@@ -31,9 +31,19 @@ export async function updateConfig(config: AppConfig): Promise<void> {
 
 export type CredentialNamespace = 'stt' | 'llm'
 
+/**
+ * Whether a provider has a key — three states, not two.
+ *
+ * `unreadable` means the credential store refused or failed the read (on macOS,
+ * declining the Keychain prompt does this). It must stay distinct from
+ * `missing`: rendering it as "no key" invites the user to retype or remove a
+ * credential that is actually fine.
+ */
+export type KeyPresence = 'saved' | 'missing' | 'unreadable'
+
 export interface CredentialStatus {
-  stt: boolean
-  llm: boolean
+  stt: KeyPresence
+  llm: KeyPresence
 }
 
 /** Whether the two currently selected providers have a key saved. */

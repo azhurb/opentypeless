@@ -90,7 +90,7 @@ vi.mock('../../../lib/tauri', () => ({
   benchSttConnection: vi.fn().mockResolvedValue(120),
   benchLlmConnection: vi.fn().mockResolvedValue(120),
   setApiKey: vi.fn().mockResolvedValue(undefined),
-  getCredentialStatus: vi.fn().mockResolvedValue({ stt: false, llm: false }),
+  getCredentialStatus: vi.fn().mockResolvedValue({ stt: 'missing', llm: 'missing' }),
 }))
 
 // ─── Mock @tauri-apps/plugin-opener ─────────────────────────────────────────
@@ -429,7 +429,7 @@ describe('DirtyBar behavior', () => {
     // stored key must not count as an edit. `credentialStatus` is display
     // state; only a draft is a change.
     act(() => {
-      useAppStore.getState().setCredentialStatus({ stt: true, llm: true })
+      useAppStore.getState().setCredentialStatus({ stt: 'saved', llm: 'saved' })
     })
     renderSettings()
     await waitFor(() => {
@@ -453,7 +453,7 @@ describe('DirtyBar behavior', () => {
 
   it('appears when a saved key is staged for removal', async () => {
     act(() => {
-      useAppStore.getState().setCredentialStatus({ stt: true, llm: false })
+      useAppStore.getState().setCredentialStatus({ stt: 'saved', llm: 'missing' })
     })
     renderSettings()
     act(() => {
@@ -484,7 +484,7 @@ describe('DirtyBar behavior', () => {
 
   it('Save sends the typed key to the vault, never to the config', async () => {
     const { setApiKey, updateConfig, getCredentialStatus } = await import('../../../lib/tauri')
-    vi.mocked(getCredentialStatus).mockResolvedValue({ stt: true, llm: false })
+    vi.mocked(getCredentialStatus).mockResolvedValue({ stt: 'saved', llm: 'missing' })
 
     renderSettings()
     act(() => {

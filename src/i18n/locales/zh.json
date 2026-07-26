@@ -130,6 +130,8 @@
     "enterApiKey": "输入 API 密钥...",
     "apiKeySaved": "•••••••••••••  已保存到系统密钥链",
     "apiKeyRemove": "移除",
+    "apiKeyUnreadable": "无法读取系统密钥链 — 已保存的密钥可能仍然存在",
+    "apiKeyUnreadableHint": "请解锁登录密钥链后重新打开设置。在此输入密钥会覆盖已存储的内容。",
     "test": "测试",
     "connectionSuccess": "连接成功",
     "connectionFailed": "连接失败",

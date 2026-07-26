@@ -60,7 +60,13 @@ export function SttPane() {
               setSttTestStatus('idle')
               setSttLatencyMs(null)
             }}
-            placeholder={apiKey.hasSavedKey ? t('settings.apiKeySaved') : t('settings.enterApiKey')}
+            placeholder={
+              apiKey.isUnreadable
+                ? t('settings.apiKeyUnreadable')
+                : apiKey.hasSavedKey
+                  ? t('settings.apiKeySaved')
+                  : t('settings.enterApiKey')
+            }
             className="flex-1 px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
           />
           <button
@@ -81,6 +87,12 @@ export function SttPane() {
         {sttTestStatus === 'error' && (
           <p className="flex items-center gap-1 text-[12px] text-error mt-2">
             <XCircle size={13} /> {t('settings.connectionFailed')}
+          </p>
+        )}
+        {apiKey.isUnreadable && (
+          <p className="flex items-start gap-1 text-[12px] text-warning mt-2">
+            <XCircle size={13} className="flex-shrink-0 mt-0.5" />
+            {t('settings.apiKeyUnreadableHint')}
           </p>
         )}
         <div className="flex items-center justify-between gap-3 mt-1.5">

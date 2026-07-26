@@ -6,5 +6,6 @@ Lifecycle: when work lands, move the file to `../completed/` if it is useful his
 
 ## Current Active Plans
 
+- [Credential vault follow-ups](credential-vault-followups.md) — what the keychain migration left open: chiefly that a Linux box with no Secret Service provider may not be able to save a key at all, plus the Developer ID signing question. Needs confirmation on a real vault-less machine.
 - [Dictation startup latency](dictation-startup-latency.md) — close the dead window between hotkey press and first audio sample; fixes #1 (native macOS app detection) and #2 (audio-first reorder) are landed and in user testing; follow-ups #3–#5 deferred.
 - [Upstream adoption review](upstream-adoption.md) — what the 144 upstream commits since the 2026-04-13 fork point contain, and the ranked shortlist worth pulling in. 0.5.0 is cut, the `color-scheme` item is landed (#26) and provider retry is landed (see [`../completed/provider-retry.md`](../completed/provider-retry.md)); the rest is open.

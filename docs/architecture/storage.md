@@ -116,6 +116,41 @@ Other cases: an empty legacy field is dropped without touching the vault; an exi
 entry wins over stale plaintext (and the plaintext is dropped); a missing `*_provider` leaves
 the plaintext in place, since there is nothing to file it under.
 
+### Reads are cached for the session
+
+`CachingVault` wraps the real vault and remembers secrets it has already read,
+so a session touches the OS credential store roughly twice instead of twice per
+dictation (the pipeline resolves an STT key and an LLM key every time).
+
+This is a macOS usability fix. A Keychain prompt offers Deny / Allow / **Always
+Allow**, and plain "Allow" grants exactly one access — so without the cache, a
+user who did not pick "Always Allow" was re-prompted on every dictation, which
+reasonably reads as something malicious.
+
+Only successful reads are cached. Errors are not, so a locked keychain keeps
+reporting itself instead of being remembered as a failure for the session;
+misses are not, so a key added out of band is still picked up. `write` and
+`delete` update the cache after the store accepts the change, never before.
+
+### When macOS actually prompts
+
+The Keychain ACL matches on the app's **designated requirement**, which differs
+by how the build is signed:
+
+| Build | Designated requirement | Prompt behavior |
+| --- | --- | --- |
+| Release (`.github/workflows/release.yml` imports the "OpenTypeless Release" cert) | `identifier "com.opentypeless.app" and certificate leaf = H"…"` | Stable across versions — an update does **not** re-prompt |
+| Local `npm run tauri build` (no cert) | `cdhash H"…"` | Changes every rebuild, so each local rebuild prompts once |
+
+So repeated prompts while developing are expected and are not a defect. They
+would only reach users if the release signing certificate were rotated.
+
+Windows and Linux have no equivalent per-app prompt: Credential Manager is
+scoped to the user account, and Secret Service unlocks with the login session.
+**Needs confirmation**: behavior on a Linux box with no Secret Service provider
+at all (minimal WM, headless) — see the open follow-up in
+[`../plans/active/credential-vault-followups.md`](../plans/active/credential-vault-followups.md).
+
 ### Vault errors are not "no key"
 
 `CredentialVault::read` returns `Ok(None)` for "no entry" and `Err` for "could not reach the
@@ -123,6 +158,13 @@ vault". Collapsing the two turns a locked keychain into the pipeline's misleadin
 not configured", which sends the user to re-enter a key that is already there. The STT path
 surfaces a distinct message and aborts; the LLM path logs a warning and skips polish, because
 failing the dictation outright would throw away a transcript the user already spoke.
+
+The same distinction reaches the UI. `get_credential_status` returns a three-state
+`KeyPresence` per namespace — `saved` / `missing` / `unreadable` — not a boolean. Reporting an
+unreadable vault as `missing` renders an empty field, which invites the user to retype the key
+or press Remove, destroying a credential that was fine. On macOS that is one declined prompt
+away. The `unreadable` state shows an explicit "couldn't read your keychain" message and
+hides Remove, since offering to delete a key whose existence is unknown is not a safe option.
 
 ### Testing
 

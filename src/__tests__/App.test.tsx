@@ -111,7 +111,7 @@ function resetAll() {
   checkAccessibilityPermission.mockReset().mockResolvedValue(true)
   checkMicrophonePermission.mockReset().mockResolvedValue('authorized')
   requestMicrophonePermission.mockReset().mockResolvedValue(true)
-  getCredentialStatus.mockReset().mockResolvedValue({ stt: true, llm: true })
+  getCredentialStatus.mockReset().mockResolvedValue({ stt: 'saved', llm: 'saved' })
   // Mount the main-window route.
   window.location.hash = ''
   // Pretend we're on Linux so the mac permission branch is skipped — the
@@ -164,7 +164,7 @@ describe('MainApp initial load — config preservation', () => {
 
     await waitFor(() => {
       expect(getCredentialStatus).toHaveBeenCalledWith('groq-whisper', 'gemini')
-      expect(useAppStore.getState().credentialStatus).toEqual({ stt: true, llm: true })
+      expect(useAppStore.getState().credentialStatus).toEqual({ stt: 'saved', llm: 'saved' })
     })
   })
 

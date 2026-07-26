@@ -92,6 +92,79 @@ pub trait CredentialVault: Send + Sync {
 /// The vault as held in Tauri managed state and by [`crate::storage::ConfigManager`].
 pub type SharedVault = std::sync::Arc<dyn CredentialVault>;
 
+/// Remembers secrets it has already read, so one app session touches the OS
+/// credential store about twice instead of twice per dictation.
+///
+/// This is a usability fix with teeth on macOS. A Keychain prompt offers Deny /
+/// Allow / **Always** Allow, and plain "Allow" grants exactly one access — so a
+/// user who picks it over Always Allow was being re-prompted on every single
+/// dictation (the pipeline reads the STT key and the LLM key each time). Users
+/// reasonably read repeated credential prompts as something malicious.
+///
+/// Only *successful* reads are cached. An error is never cached, so a locked
+/// keychain keeps reporting itself rather than being remembered as a failure
+/// for the session; a miss is never cached either, so a key added out of band
+/// is still picked up.
+///
+/// The tradeoff: a resolved secret stays in process memory for the session
+/// rather than only for the duration of a request. It was already in memory
+/// whenever a request was in flight, and it is never written anywhere or handed
+/// to the webview.
+pub struct CachingVault {
+    inner: SharedVault,
+    cache: std::sync::Mutex<std::collections::HashMap<String, String>>,
+}
+
+impl CachingVault {
+    pub fn new(inner: SharedVault) -> Self {
+        Self {
+            inner,
+            cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+impl CredentialVault for CachingVault {
+    fn read(&self, id: &CredentialId) -> Result<Option<String>> {
+        if let Some(hit) = self
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id.account())
+        {
+            return Ok(Some(hit.clone()));
+        }
+        let fresh = self.inner.read(id)?;
+        if let Some(secret) = &fresh {
+            self.cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id.account(), secret.clone());
+        }
+        Ok(fresh)
+    }
+
+    fn write(&self, id: &CredentialId, secret: &str) -> Result<()> {
+        self.inner.write(id, secret)?;
+        // Only after the store accepted it — caching first would serve a secret
+        // that isn't actually persisted.
+        self.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.account(), secret.to_string());
+        Ok(())
+    }
+
+    fn delete(&self, id: &CredentialId) -> Result<()> {
+        self.inner.delete(id)?;
+        self.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id.account());
+        Ok(())
+    }
+}
+
 /// The real vault: Keychain on macOS, Credential Manager on Windows, Secret
 /// Service on Linux (see the per-platform `keyring` features in `Cargo.toml`).
 pub struct SystemCredentialVault;
@@ -290,6 +363,9 @@ pub struct MemoryVault {
     /// When set, every operation fails with this message — used to exercise the
     /// "vault write failed, keep the plaintext" path.
     fail_with: Option<String>,
+    /// Counts `read` calls that actually reached this vault, so tests can prove
+    /// [`CachingVault`] is keeping them away from the OS.
+    reads: std::sync::atomic::AtomicUsize,
 }
 
 impl MemoryVault {
@@ -300,9 +376,14 @@ impl MemoryVault {
     /// A vault where every operation errors.
     pub fn failing(message: impl Into<String>) -> Self {
         Self {
-            entries: std::sync::Mutex::new(std::collections::HashMap::new()),
             fail_with: Some(message.into()),
+            ..Self::default()
         }
+    }
+
+    /// How many reads reached this vault.
+    pub fn read_count(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn guard(&self) -> Result<()> {
@@ -315,6 +396,8 @@ impl MemoryVault {
 
 impl CredentialVault for MemoryVault {
     fn read(&self, id: &CredentialId) -> Result<Option<String>> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.guard()?;
         Ok(self
             .entries
@@ -351,6 +434,7 @@ impl CredentialVault for MemoryVault {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Arc;
 
     #[test]
     fn account_is_namespace_and_provider() {
@@ -443,6 +527,134 @@ mod tests {
         assert_eq!(
             decode_secret(r#"{"version":1,"secret":"sk-wrapped"}"#),
             "sk-wrapped"
+        );
+    }
+
+    // ─── CachingVault ───
+
+    #[test]
+    fn repeated_reads_hit_the_store_once() {
+        // The whole point: a dictation reads the STT and LLM keys every time,
+        // and on macOS each read can be a fresh authorization prompt.
+        let inner = Arc::new(MemoryVault::new());
+        inner
+            .write(&CredentialId::stt("deepgram"), "dg-key")
+            .unwrap();
+        let vault = CachingVault::new(inner.clone());
+        let id = CredentialId::stt("deepgram");
+
+        for _ in 0..10 {
+            assert_eq!(vault.read(&id).unwrap(), Some("dg-key".to_string()));
+        }
+
+        assert_eq!(
+            inner.read_count(),
+            1,
+            "only the first read may reach the store"
+        );
+    }
+
+    #[test]
+    fn each_account_is_cached_separately() {
+        let inner = Arc::new(MemoryVault::new());
+        inner.write(&CredentialId::stt("deepgram"), "dg").unwrap();
+        inner.write(&CredentialId::llm("groq"), "gq").unwrap();
+        let vault = CachingVault::new(inner.clone());
+
+        for _ in 0..5 {
+            vault.read(&CredentialId::stt("deepgram")).unwrap();
+            vault.read(&CredentialId::llm("groq")).unwrap();
+        }
+
+        assert_eq!(inner.read_count(), 2, "one read per distinct account");
+        assert_eq!(
+            vault.read(&CredentialId::llm("groq")).unwrap(),
+            Some("gq".to_string()),
+            "cache must not cross accounts"
+        );
+    }
+
+    #[test]
+    fn a_failed_read_is_never_cached() {
+        // A locked keychain must keep reporting itself. Caching the error would
+        // turn a transient lock into a session-long outage.
+        let inner = Arc::new(MemoryVault::failing("keychain is locked"));
+        let vault = CachingVault::new(inner.clone());
+        let id = CredentialId::stt("deepgram");
+
+        assert!(vault.read(&id).is_err());
+        assert!(vault.read(&id).is_err());
+        assert_eq!(inner.read_count(), 2, "every read must retry the store");
+    }
+
+    #[test]
+    fn a_miss_is_never_cached() {
+        // Otherwise a key that appears out of band stays invisible until restart.
+        let inner = Arc::new(MemoryVault::new());
+        let vault = CachingVault::new(inner.clone());
+        let id = CredentialId::stt("deepgram");
+
+        assert_eq!(vault.read(&id).unwrap(), None);
+        inner.write(&id, "arrived-later").unwrap();
+
+        assert_eq!(
+            vault.read(&id).unwrap(),
+            Some("arrived-later".to_string()),
+            "a cached miss would hide this"
+        );
+    }
+
+    #[test]
+    fn writing_refreshes_the_cached_value() {
+        let inner = Arc::new(MemoryVault::new());
+        inner.write(&CredentialId::llm("groq"), "old").unwrap();
+        let vault = CachingVault::new(inner.clone());
+        let id = CredentialId::llm("groq");
+
+        assert_eq!(vault.read(&id).unwrap(), Some("old".to_string()));
+        vault.write(&id, "new").unwrap();
+
+        assert_eq!(
+            vault.read(&id).unwrap(),
+            Some("new".to_string()),
+            "a stale cache would keep authenticating with the replaced key"
+        );
+        assert_eq!(
+            inner.read_count(),
+            1,
+            "the write should not force a re-read"
+        );
+    }
+
+    #[test]
+    fn a_rejected_write_does_not_poison_the_cache() {
+        // If the store refused the value, serving it from cache would report a
+        // key as working that is not actually persisted.
+        let inner = Arc::new(MemoryVault::failing("keychain is locked"));
+        let vault = CachingVault::new(inner.clone());
+        let id = CredentialId::llm("groq");
+
+        assert!(vault.write(&id, "never-stored").is_err());
+        assert!(
+            vault.read(&id).is_err(),
+            "must not serve the rejected value"
+        );
+    }
+
+    #[test]
+    fn deleting_drops_the_cached_value() {
+        let inner = Arc::new(MemoryVault::new());
+        inner.write(&CredentialId::llm("groq"), "gq").unwrap();
+        let vault = CachingVault::new(inner.clone());
+        let id = CredentialId::llm("groq");
+
+        assert_eq!(vault.read(&id).unwrap(), Some("gq".to_string()));
+        vault.delete(&id).unwrap();
+
+        assert_eq!(
+            vault.read(&id).unwrap(),
+            None,
+            "removed key must stay removed"
         );
     }
 

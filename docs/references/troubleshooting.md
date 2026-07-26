@@ -30,6 +30,26 @@ Fix:
 4. Toggle the new entry on
 5. Dictate again
 
+## macOS: "It keeps asking for my password to access the keychain"
+
+API keys live in the login keychain (see [Storage → Credentials](../architecture/storage.md#credentials-os-credential-vault)). A keychain item's ACL matches on the app's **designated requirement**, so which builds it trusts depends on how they were signed:
+
+- **Release builds** are signed with the "OpenTypeless Release" certificate, giving a requirement of `certificate leaf = H"…"`. That is stable across versions, so updating the app does *not* re-prompt.
+- **Local builds** (`npm run tauri build` with no certificate) are ad-hoc signed, giving `cdhash H"…"` — a different identity on every rebuild. Each rebuild is a stranger to the previous build's keychain items and prompts once. This is expected while developing; click **Always Allow**.
+
+Two things that look like this bug but aren't:
+
+- Running `security find-generic-password -s com.opentypeless.app …` from a terminal prompts every time. `/usr/bin/security` is not on the item's ACL — that dialog says "**security** wants to use your confidential information", not "OpenTypeless". Read the app's own log instead: it reports `stt_key_len` at dictation time.
+- Choosing **Allow** rather than **Always Allow** grants a single access. Reads are cached per session, so this costs at most one prompt per key per launch rather than one per dictation.
+
+If prompts genuinely repeat for a *released* build, the signing certificate has likely been rotated; every existing ACL entry then needs one "Always Allow" again.
+
+Inspect what a bundle claims with:
+
+```bash
+codesign -d -r- /Applications/OpenTypeless.app
+```
+
 ## macOS: "I granted Microphone but it never appeared again"
 
 The macOS Microphone dialog is one-shot per install. If you dismissed or denied it, the only path forward is System Settings → Privacy & Security → Microphone. The onboarding Permissions step surfaces a deeplink button for this case.

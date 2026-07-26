@@ -258,7 +258,7 @@ export const useAppStore = create<AppState>((set) => ({
   setKeyDraft: (namespace, value) =>
     set((s) => ({ keyDrafts: { ...s.keyDrafts, [namespace]: value } })),
   clearKeyDrafts: () => set({ keyDrafts: { stt: null, llm: null } }),
-  credentialStatus: { stt: false, llm: false },
+  credentialStatus: { stt: 'missing', llm: 'missing' },
   setCredentialStatus: (credentialStatus) => set({ credentialStatus }),
 
   history: [],

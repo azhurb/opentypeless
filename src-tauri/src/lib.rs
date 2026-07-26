@@ -198,15 +198,30 @@ async fn update_config(
     Ok(())
 }
 
+/// Whether one provider has a key, as far as we could tell.
+///
+/// Three states, not two. `Unreadable` exists because reporting a vault we
+/// could not read as `Missing` is actively dangerous: the pane would render an
+/// empty field, the user would conclude their key had vanished, and retyping it
+/// — or hitting Remove — overwrites a credential that was perfectly fine. On
+/// macOS this is a button press away, since declining a Keychain prompt fails
+/// the read.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum KeyPresence {
+    Saved,
+    Missing,
+    Unreadable,
+}
+
 /// Which of the two selected providers have a key in the vault.
 ///
-/// The panes need this to decide between "enter your key" and "a key is saved",
-/// and it is the whole reason the frontend can stop holding secrets: it answers
+/// This is the whole reason the frontend can stop holding secrets: it answers
 /// *is a key set* without ever handing one back to the webview.
 #[derive(serde::Serialize)]
 struct CredentialStatus {
-    stt: bool,
-    llm: bool,
+    stt: KeyPresence,
+    llm: KeyPresence,
 }
 
 #[tauri::command]
@@ -215,19 +230,19 @@ async fn get_credential_status(
     stt_provider: String,
     llm_provider: String,
 ) -> Result<CredentialStatus, String> {
-    // A vault that cannot be read reports "no key set" rather than failing the
-    // whole Settings pane; the pipeline and the Test button surface the real
-    // error when the user actually tries to use the key.
-    let present = |id: credentials::CredentialId| match vault.read(&id) {
-        Ok(key) => key.is_some_and(|k| !k.is_empty()),
+    // Deliberately not an `Err`: one unreadable key should degrade that one
+    // field, not fail the whole Settings pane.
+    let presence = |id: credentials::CredentialId| match vault.read(&id) {
+        Ok(Some(key)) if !key.is_empty() => KeyPresence::Saved,
+        Ok(_) => KeyPresence::Missing,
         Err(e) => {
             tracing::warn!("vault read failed for {}: {:#}", id.account(), e);
-            false
+            KeyPresence::Unreadable
         }
     };
     Ok(CredentialStatus {
-        stt: present(credentials::CredentialId::stt(&stt_provider)),
-        llm: present(credentials::CredentialId::llm(&llm_provider)),
+        stt: presence(credentials::CredentialId::stt(&stt_provider)),
+        llm: presence(credentials::CredentialId::llm(&llm_provider)),
     })
 }
 
@@ -1252,8 +1267,15 @@ pub fn run() {
             // Initialize stores
             // Built before the config manager: loading the config runs the
             // plaintext-key migration, which needs the vault.
-            let vault: credentials::SharedVault =
-                Arc::new(credentials::SystemCredentialVault::new());
+            //
+            // Wrapped in `CachingVault` so a session touches the OS credential
+            // store about twice rather than twice per dictation. On macOS the
+            // "Allow" button on a Keychain prompt grants a single access, so
+            // without this a user who did not pick "Always Allow" was
+            // re-prompted on every dictation.
+            let vault: credentials::SharedVault = Arc::new(credentials::CachingVault::new(
+                Arc::new(credentials::SystemCredentialVault::new()),
+            ));
             let config_manager = storage::ConfigManager::new(app_handle.clone(), vault.clone());
             let history_store = storage::HistoryStore::new(db_path.clone())
                 .map_err(|e| anyhow::anyhow!("Failed to init history store: {}", e))?;

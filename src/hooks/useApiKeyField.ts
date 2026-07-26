@@ -17,6 +17,12 @@ export interface ApiKeyField {
   value: string
   /** A key is in the vault and the user has not started replacing it. */
   hasSavedKey: boolean
+  /**
+   * The credential store could not be read, so we do not know whether a key is
+   * there. The pane must say so rather than render an empty field — treating
+   * this as "no key" is how a user ends up overwriting a working credential.
+   */
+  isUnreadable: boolean
   onChange: (next: string) => void
   /** Drop the saved key. Takes effect on Save, like every other setting. */
   clear: () => void
@@ -32,7 +38,9 @@ export interface ApiKeyField {
 export function useApiKeyField(namespace: CredentialNamespace): ApiKeyField {
   const draft = useAppStore((s) => s.keyDrafts[namespace])
   const setKeyDraft = useAppStore((s) => s.setKeyDraft)
-  const savedInVault = useAppStore((s) => s.credentialStatus[namespace])
+  const presence = useAppStore((s) => s.credentialStatus[namespace])
+  const savedInVault = presence === 'saved'
+  const unreadable = presence === 'unreadable'
 
   const onChange = useCallback(
     (next: string) => setKeyDraft(namespace, next),
@@ -48,9 +56,12 @@ export function useApiKeyField(namespace: CredentialNamespace): ApiKeyField {
   return {
     value: draft ?? '',
     hasSavedKey,
+    isUnreadable: unreadable && draft === null,
     onChange,
     clear,
-    canTest: draft !== null ? draft.length > 0 : savedInVault,
+    // Still testable when the store is unreadable: the probe goes through the
+    // same read and turns the guess into a real error message.
+    canTest: draft !== null ? draft.length > 0 : savedInVault || unreadable,
     probeKey: draft,
   }
 }
