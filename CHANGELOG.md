@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
-## [Unreleased]
+## [0.5.0] - 2026-07-26
 
 ### Added
 - Dictation history is now optional and can clean itself up. Settings → General → History adds a **Save dictation history** toggle and a **Keep history for** picker (Forever / 7 / 30 / 90 days). With the toggle off, dictations are still transcribed, polished, and typed — they are simply never written to the history table; entries already stored stay listed and searchable, and the History page says saving is off. The toggle is re-read at write time rather than taken from the recording-start snapshot, so opting out mid-dictation is honored. Retention applies to stored entries whether or not saving is on, and is pruned on insert, after a dictation when saving is off, once at startup, and immediately on Save — narrowing the window asks for confirmation first, since the deletion can't be undone. Deleted rows are scrubbed rather than just unlinked (`PRAGMA secure_delete`, plus a WAL checkpoint), so expired transcripts don't stay readable in the database file. Both settings default to the previous behavior — history on, kept forever — so upgrading changes nothing and deletes nothing. The 5000-row cap remains as a backstop below the age limit. See [`docs/architecture/storage.md`](docs/architecture/storage.md#retention).
