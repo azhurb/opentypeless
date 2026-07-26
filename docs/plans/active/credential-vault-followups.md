@@ -82,14 +82,7 @@ An Apple Developer account ($99/yr) would buy three things at once:
 A spend decision, not a code one. When it happens, flip `default_store` to use
 `SystemCredentialVault` on macOS and `FILE_STORE_IS_THE_DEFAULT` to `false`.
 
-## 3. Release workflow accepts a non-tag ref
-
-`release.yml` computes `VERSION="${{ inputs.tag || github.ref_name }}"` with no validation, so
-dispatching it on a *branch* produced a release versioned `0.1.14` out of nowhere and shipped a
-bundle whose About page showed that. A guard rejecting anything that is not `vX.Y.Z` would have
-failed the run loudly instead.
-
-## 4. Smaller items
+## 3. Smaller items
 
 - `MemoryVault` lives in the shipped binary rather than behind `#[cfg(test)]`, so integration
   tests and other modules' test modules can use it. Nothing constructs one in the app. If that
