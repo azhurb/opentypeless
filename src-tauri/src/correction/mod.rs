@@ -591,9 +591,16 @@ mod tests {
         let _h = spawn(field, dict.clone(), "Bob".to_string(), move |s| {
             let _ = tx.send(s);
         });
-        // Wait past the test-mode WATCH_DURATION_MS (2000ms).
+        // Wait past the test-mode WATCH_DURATION_MS (2000ms). The margin is
+        // deliberately generous rather than the 500ms it used to be: the watcher
+        // reaches its timeout by running ~80 `sleep(POLL_INTERVAL_MS)` iterations,
+        // and each one overshoots by up to the platform timer granularity — ~15.6ms
+        // on Windows, where that drift accumulates past 500ms and failed this test
+        // on CI. `recv_timeout` returns as soon as the emit arrives, so a larger
+        // bound costs nothing on the happy path; it only stops the assertion from
+        // racing a loaded runner.
         let got =
-            tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(2_500)))
+            tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_millis(8_000)))
                 .await
                 .unwrap()
                 .expect("timeout-emit must fire on degenerate path");
