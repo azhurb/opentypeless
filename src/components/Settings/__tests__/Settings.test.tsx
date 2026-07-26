@@ -92,6 +92,10 @@ vi.mock('../../../lib/tauri', () => ({
 // ─── Mock @tauri-apps/plugin-opener ─────────────────────────────────────────
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 
+// ─── Mock @tauri-apps/api/app ───────────────────────────────────────────────
+// AboutPane reads the version from the bundle; there is no IPC under vitest.
+vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn().mockResolvedValue('9.9.9') }))
+
 // ─── Import components AFTER mocks ───────────────────────────────────────────
 import { Settings } from '../index'
 
@@ -159,6 +163,14 @@ describe('Settings tab switching', () => {
     renderSettings()
     clickSidebarItem('settings.about')
     expect(screen.getByText('settings.openSource')).toBeDefined()
+  })
+
+  // Regression: About rendered a hardcoded 'v0.1.0' constant, so every release
+  // since 0.2.0 displayed the wrong version. Assert it comes from the bundle.
+  it('shows the version reported by the bundle, not a hardcoded constant', async () => {
+    renderSettings()
+    clickSidebarItem('settings.about')
+    expect(await screen.findByText('v9.9.9')).toBeDefined()
   })
 
   it('can switch back and forth between multiple tabs', () => {

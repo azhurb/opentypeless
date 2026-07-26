@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../i18n'
 import { ExternalLink } from 'lucide-react'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { getVersion } from '@tauri-apps/api/app'
 import { useAppStore } from '../../stores/appStore'
-import { APP_NAME, APP_VERSION, APP_REPO_URL } from '../../lib/constants'
+import { APP_NAME, APP_REPO_URL } from '../../lib/constants'
 
 const UI_LANGUAGES = [
   { code: 'en', label: 'English', native: 'English' },
@@ -17,6 +19,19 @@ export function AboutPane() {
 
   const currentLang = config.ui_language || i18n.language || 'en'
 
+  // Read the version from the bundle rather than a checked-in constant. The
+  // release workflow rewrites tauri.conf.json from the tag, so this is the only
+  // value that tracks the actual release; a constant in the repo stays at
+  // 0.1.0 because the workflow deliberately never commits version bumps.
+  const [version, setVersion] = useState('')
+  useEffect(() => {
+    getVersion()
+      // No IPC outside the Tauri shell (e.g. vitest, a browser preview). Show
+      // nothing rather than a hardcoded number that would be wrong again.
+      .then((v) => setVersion(`v${v}`))
+      .catch(() => setVersion(''))
+  }, [])
+
   const handleSelectLanguage = (code: string) => {
     i18n.changeLanguage(code)
     localStorage.setItem('ui_language', code)
@@ -28,7 +43,7 @@ export function AboutPane() {
       {/* Header */}
       <div className="text-center py-6">
         <h2 className="text-[22px] font-semibold text-text-primary">{APP_NAME}</h2>
-        <p className="text-text-secondary mt-1 text-[13px]">{APP_VERSION}</p>
+        <p className="text-text-secondary mt-1 text-[13px]">{version}</p>
       </div>
 
       <p className="text-text-secondary leading-relaxed">{t('settings.aboutDescription')}</p>

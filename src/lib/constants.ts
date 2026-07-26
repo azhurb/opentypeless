@@ -1,6 +1,9 @@
 // App metadata
 export const APP_NAME = 'OpenTypeless'
-export const APP_VERSION = 'v0.1.0'
+// No APP_VERSION here on purpose: the release workflow rewrites the version in
+// package.json / tauri.conf.json / Cargo.toml at build time and never commits
+// it, so any constant in this file is permanently stale. AboutPane reads the
+// real version from the bundle via `getVersion()`.
 export const APP_REPO_URL = 'https://github.com/azhurb/opentypeless'
 export const APP_LICENSE_URL = 'https://github.com/azhurb/opentypeless/blob/main/LICENSE'
 
