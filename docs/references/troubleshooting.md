@@ -42,6 +42,23 @@ Two things that look like this bug but aren't:
 - Running `security find-generic-password -s com.opentypeless.app …` from a terminal prompts every time. `/usr/bin/security` is not on the item's ACL — that dialog says "**security** wants to use your confidential information", not "OpenTypeless". Read the app's own log instead: it reports `stt_key_len` at dictation time.
 - Choosing **Allow** rather than **Always Allow** grants a single access. Reads are cached per session, so this costs at most one prompt per key per launch rather than one per dictation.
 
+### Stopping the per-rebuild prompt while developing
+
+Each ad-hoc build appends its own hash to the item's ACL once you click "Always Allow", so the prompts never stop — the next rebuild is a new stranger. Observed directly in `securityd`'s log: the ACL had accumulated the hashes of two earlier builds while a third, freshly built binary was the one asking.
+
+Sign local builds with a stable self-signed certificate instead, and the ACL pins to the certificate rather than the hash:
+
+1. Keychain Access → Certificate Assistant → **Create a Certificate…**
+2. Name it (e.g. `OpenTypeless Dev`), Identity Type **Self Signed Root**, Certificate Type **Code Signing**.
+3. Find it in **login**, open it, and set **Trust → Code Signing: Always Trust**.
+4. Build with it:
+
+```bash
+APPLE_SIGNING_IDENTITY="OpenTypeless Dev" npm run tauri build
+```
+
+Every subsequent build signed with that certificate satisfies the same ACL entry, so you approve once. Delete existing entries first (Keychain Access, search `com.opentypeless.app`) so they get recreated against the certificate rather than an old hash.
+
 If prompts genuinely repeat for a *released* build, the signing certificate has likely been rotated; every existing ACL entry then needs one "Always Allow" again.
 
 Inspect what a bundle claims with:
