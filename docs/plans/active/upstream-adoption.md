@@ -1,15 +1,47 @@
 # Upstream Adoption Review
 
-Reviewed 2026-07-26 against upstream [`tover0314-w/opentypeless`](https://github.com/tover0314-w/opentypeless).
+Reviewed 2026-07-26 against upstream [`tover0314-w/opentypeless`](https://github.com/tover0314-w/opentypeless). Status re-checked 2026-07-26 after the provider-layer PRs landed.
 
 ## Divergence
 
 | | |
 | --- | --- |
 | Fork point | `6a4d88a`, 2026-04-13 |
-| Upstream commits we don't have | 144 (tip `b0062ac`, 2026-07-25) |
-| Our commits upstream doesn't have | 47 (46 at first review; #20 landed since) |
+| Upstream commits we don't have | 144 (tip `b0062ac`, 2026-07-25) — unchanged since the review; upstream has not pushed since |
+| Our commits upstream doesn't have | 59 |
+| Unreleased on our `main` | 10 commits since `v0.5.0` |
 | Upstream churn in `src/` + `src-tauri/` | ~78.5k insertions across 251 files |
+
+## Status at a glance
+
+Adoption decisions and where each stands. Nothing here is blocked on upstream.
+
+| Item | Decision | Status |
+| --- | --- | --- |
+| Tier 1 #1 — `color-scheme` for native selects | Adopt | **Landed** (#26) |
+| Tier 1 #2 — pooled `reqwest::Client` | Adopt | **Landed** (#31) |
+| Second pass #3 — quota-free OpenAI connection test | Adopt | **Landed** (#31) |
+| Tier 2 — provider retry with backoff | Adopt, rewrite not port | **Landed** (#31), see [`../completed/provider-retry.md`](../completed/provider-retry.md) |
+| Second pass #1 — keychain migration | Adopt | **Next up** — brief in [`keychain-migration.md`](keychain-migration.md) |
+| Second pass, small — `3f9fbc2` preserve STT provider errors | Adopt | Open. Same code path as the retry work; deliberately not folded in |
+| Second pass #2 — Apple Speech on-device STT | Adopt as its own feature | Open |
+| Tier 1 #3 — NVIDIA/Wayland DMA-BUF workaround | Adopt | Open |
+| Tier 1 #4 — capsule focus-steal fix | Adopt after checking our `NONACTIVATING_PANEL` path | Open |
+| Second pass, small — `dfb8ab8` cancel-crash, frontend half only | Adopt partially | Open |
+| Tier 2 — Windows output correctness (3 commits) | Blocked on a product decision | Open — decide whether we support Windows properly first |
+| Tier 2 — Linux packaging fixes (6 commits) | Adopt when needed | Deferred to the next Linux release |
+| Tier 2 — unsigned-app install docs | Adopt | Open, README gap |
+| Tier 3 — scenes, settings backup, local Whisper, Qwen3 ASR, `lib.rs` split | Concept only, not ports | Open, unscheduled |
+| i18n — 8 extra locales | Partial value only | Open; a translation project, not a cherry-pick |
+| `selection.rs` | **Rejected** | Would reintroduce the `osascript` path PR #7 removed |
+| Cloud STT/LLM, auth/OAuth, subscriptions, quota, "ask anything", Vercel, funding link | **Rejected** | The product direction this fork exists to avoid |
+
+Not in the original review, found while implementing the retry work — both fixed, neither upstream-derived:
+
+| Item | Status |
+| --- | --- |
+| `stt::create_provider` had no `deepgram` arm since the initial commit; the UI offered it and it silently fell back to GLM-ASR | **Landed** (#33) |
+| Deepgram discarded the transcript on `speech_final`; both streaming providers closed without draining the provider's flush | **Landed** (#33) / **open PR** (#34, needs live validation) |
 
 **Upstream's direction has split from ours.** The bulk of those 78.5k lines is a managed
 cloud product: auth and OAuth deep links (`authStore.ts` +419, `desktop-auth-callback.ts`),
@@ -29,7 +61,7 @@ Ranked by value per line of change.
 
 | # | Upstream | What | Why it matters here |
 | --- | --- | --- | --- |
-| 1 | `e2c21d0` | 8 lines of CSS: `html { color-scheme: light }` / `html.dark { color-scheme: dark }` | We have **no** `color-scheme` declaration, and our theme hook toggles exactly `html.dark` (`src/hooks/useTheme.ts:13`). Native `<select>` dropdowns in Settings (STT provider, LLM model, target language, and the new history retention picker) therefore render with light-mode popups in dark theme. Applies verbatim. |
+| 1 | `e2c21d0` | 8 lines of CSS: `html { color-scheme: light }` / `html.dark { color-scheme: dark }` | **Landed** (#26). |
 | 2 | `fc34864` | One pooled `reqwest::Client` in Tauri state instead of per-call construction | **Landed** — see [`../completed/provider-retry.md`](../completed/provider-retry.md). |
 | 3 | `ca20074` | 22 lines in `lib.rs`: detect NVIDIA + Wayland, disable the DMA-BUF renderer | Fixes a blank-window class of bug on a common Linux configuration. Self-contained, no API surface. |
 | 4 | `99a63e0` | Capsule window config + `useCapsuleResize` change so the capsule can't take focus from the paste target | Directly adjacent to our paste-landing work. Worth checking whether our macOS `NONACTIVATING_PANEL` path already covers it — the Windows/Linux side probably isn't. |
@@ -144,12 +176,14 @@ fold `[Unreleased]` into `[0.5.0]` in its own PR, then tag.
 
 ## Suggested order
 
-1. Fold `[Unreleased]` → `[0.5.0]`, tag, release. Nothing below starts before this.
-2. Tier 1 #1 (`color-scheme`) — one-line CSS fix; #20 added another native `<select>`
-   (the retention picker) that renders a light popup in dark theme today.
+1. ~~Fold `[Unreleased]` → `[0.5.0]`, tag, release.~~ **done** — `v0.5.0` is cut. Ten commits
+   have accumulated since; a `0.6.0` fold is available whenever wanted, and the same
+   bisectability argument applies before the keychain work touches `storage/mod.rs`.
+2. ~~Tier 1 #1 (`color-scheme`)~~ **done** (#26).
 3. ~~Second pass #3 (`da7b5fd`, quota-free connection test)~~ **done**, and #1 (keychain
    migration) — the two on-mission BYOK items. #1 is the larger piece and wants its own PR
-   plus a `docs/architecture/storage.md` update, and is the next item up.
+   plus a `docs/architecture/storage.md` update, and is **the next item up**: see
+   [`keychain-migration.md`](keychain-migration.md).
 4. ~~Tier 1 #2 (pooled HTTP client) and Tier 2 retry/backoff together~~ **done** — both lived
    in the provider layer, and retry is much less useful without connection reuse. Second pass
    `3f9fbc2` (preserve provider errors) was *not* folded in; still open on the same code path.
