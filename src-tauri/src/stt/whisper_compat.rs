@@ -76,9 +76,44 @@ fn normalize_language(name: &str) -> Option<String> {
     Some(code.to_string())
 }
 
+/// Wrap a rejected upload so [`crate::retry::is_retryable`] can still see the
+/// status. A plain `bail!` erases it, which silently turns every transient 503
+/// back into a lost dictation — hence the dedicated helper and its tests.
+fn upload_error(provider_name: &str, status: reqwest::StatusCode, body: &str) -> anyhow::Error {
+    let sanitized = crate::retry::truncate_error_body(body);
+    tracing::error!("{} HTTP {}: {}", provider_name, status, sanitized);
+    crate::retry::HttpStatusError::new(
+        status,
+        format!("{provider_name} error ({status}): {sanitized}"),
+    )
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upload_error_is_retryable_for_server_errors() {
+        let err = upload_error("GLM-ASR", reqwest::StatusCode::SERVICE_UNAVAILABLE, "busy");
+        assert!(
+            crate::retry::is_retryable(&err),
+            "a 503 upload must stay retryable, or a transient blip loses the dictation"
+        );
+        assert_eq!(
+            err.to_string(),
+            "GLM-ASR error (503 Service Unavailable): busy"
+        );
+    }
+
+    #[test]
+    fn upload_error_is_fatal_for_a_rejected_key() {
+        let err = upload_error("OpenAI Whisper", reqwest::StatusCode::UNAUTHORIZED, "nope");
+        assert!(
+            !crate::retry::is_retryable(&err),
+            "a rejected key must reach the user immediately"
+        );
+    }
 
     #[test]
     fn build_form_omits_language_when_set_is_empty() {
@@ -207,16 +242,10 @@ pub struct WhisperCompatProvider {
 }
 
 impl WhisperCompatProvider {
-    pub fn new(provider_config: WhisperCompatConfig) -> Self {
-        Self {
-            provider_config,
-            stt_config: None,
-            audio_buffer: Vec::new(),
-            client: reqwest::Client::new(),
-        }
-    }
-
-    pub fn with_client(provider_config: WhisperCompatConfig, client: reqwest::Client) -> Self {
+    /// Takes the app-wide pooled client (`crate::HttpClient`) rather than
+    /// building one, so uploads reuse a warm connection — and so this provider
+    /// cannot quietly opt out of the pool.
+    pub fn new(provider_config: WhisperCompatConfig, client: reqwest::Client) -> Self {
         Self {
             provider_config,
             stt_config: None,
@@ -307,55 +336,49 @@ impl SttProvider for WhisperCompatProvider {
             audio_len_secs
         );
 
-        let file_part = reqwest::multipart::Part::bytes(wav_data)
-            .file_name("audio.wav")
-            .mime_str("audio/wav")?;
+        let provider_name = self.provider_config.provider_name;
 
-        let mut form = reqwest::multipart::Form::new().part("file", file_part);
-        for (k, v) in build_form_text_fields(
-            self.provider_config.model,
-            &config.languages,
-            self.provider_config.extra_fields,
-        ) {
-            form = form.text(k, v);
-        }
+        // Safe to retry: one idempotent multipart POST, and nothing has been
+        // shown to the user yet. A 429 or 502 here would otherwise throw away
+        // the whole utterance the user just spoke.
+        let (text, detected) =
+            crate::retry::with_retry(&format!("{provider_name} transcription"), || async {
+                // A multipart form is single-use, so each attempt rebuilds it —
+                // including its copy of the WAV. That copy is the same order of
+                // magnitude as the upload itself (~1 MB for a typical
+                // utterance), so it is not worth avoiding.
+                let file_part = reqwest::multipart::Part::bytes(wav_data.clone())
+                    .file_name("audio.wav")
+                    .mime_str("audio/wav")?;
 
-        let resp = self
-            .client
-            .post(self.provider_config.endpoint)
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .multipart(form)
-            .timeout(std::time::Duration::from_secs(60))
-            .send()
+                let mut form = reqwest::multipart::Form::new().part("file", file_part);
+                for (k, v) in build_form_text_fields(
+                    self.provider_config.model,
+                    &config.languages,
+                    self.provider_config.extra_fields,
+                ) {
+                    form = form.text(k, v);
+                }
+
+                let resp = self
+                    .client
+                    .post(self.provider_config.endpoint)
+                    .header("Authorization", format!("Bearer {}", config.api_key))
+                    .multipart(form)
+                    .timeout(std::time::Duration::from_secs(60))
+                    .send()
+                    .await?;
+
+                let status = resp.status();
+                let body = resp.text().await?;
+
+                if !status.is_success() {
+                    return Err(upload_error(provider_name, status, &body));
+                }
+
+                parse_response(&body)
+            })
             .await?;
-
-        let status = resp.status();
-        let body = resp.text().await?;
-
-        if !status.is_success() {
-            // Truncate at a valid UTF-8 char boundary to avoid panic on multi-byte chars
-            let truncate_at = body
-                .char_indices()
-                .take_while(|&(i, _)| i < 200)
-                .last()
-                .map(|(i, c)| i + c.len_utf8())
-                .unwrap_or(body.len());
-            let sanitized = &body[..truncate_at];
-            tracing::error!(
-                "{} HTTP {}: {}",
-                self.provider_config.provider_name,
-                status,
-                sanitized
-            );
-            anyhow::bail!(
-                "{} error ({}): {}",
-                self.provider_config.provider_name,
-                status,
-                sanitized
-            );
-        }
-
-        let (text, detected) = parse_response(&body)?;
 
         tracing::info!(
             "{} transcription: {} chars (detected={:?})",

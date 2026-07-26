@@ -2,7 +2,7 @@
 
 `src-tauri/src/pipeline.rs` orchestrates recording → STT → LLM polish → keyboard/clipboard output. See [Providers](providers.md) for the provider traits used here and [Frontend ↔ Backend](frontend-backend.md) for the events the frontend listens to.
 
-`PipelineHandle` is a Tauri-managed singleton. It holds: current `PipelineState`, audio handle, accumulated transcript, abort flag, preloaded config/context/dictionary, captured selected text, recording start time, shared `reqwest::Client`, and a `pipeline_lock`.
+`PipelineHandle` is a Tauri-managed singleton. It holds: current `PipelineState`, audio handle, accumulated transcript, abort flag, preloaded config/context/dictionary, captured selected text, recording start time, a clone of the app-wide pooled `reqwest::Client` (`crate::HttpClient`, passed to `PipelineHandle::new` and handed to every provider — see [Providers → Pooled HTTP Client](providers.md#pooled-http-client)), and a `pipeline_lock`.
 
 ## States
 
@@ -17,7 +17,7 @@ State changes emit `pipeline:state` to the frontend and update tray tooltip / ca
 3. Audio capture opens first, before any of the slow async setup. The cpal stream feeds an mpsc channel bounded at ~4 s of headroom (200 chunks of 20 ms), so samples buffer locally while the rest of setup runs — collapsing the dead window between hotkey press and first-captured audio.
 4. Config, current foreground-app context, and dictionary are loaded.
 5. STT API config is built. An empty API key aborts the pipeline, tearing down the running audio capture via `cleanup_failed_start()`.
-6. STT provider connects. For streaming providers (Deepgram, AssemblyAI) this is a full WebSocket handshake — audio keeps buffering during the handshake.
+6. STT provider connects. For streaming providers (Deepgram, AssemblyAI) this is a full WebSocket handshake — audio keeps buffering during the handshake, including across a retried attempt (see [Transient Failure Retry](#transient-failure-retry)).
 7. The STT forwarder task spawns, immediately flushing any pre-buffered chunks into the now-connected provider.
 8. Partial and final transcript events are emitted to the frontend.
 
@@ -28,10 +28,20 @@ Background: audio capture used to be the *last* step of setup. With streaming ST
 1. State moves `Recording → Transcribing`.
 2. If selected-text mode is enabled, the pipeline waits `SELECTED_TEXT_CAPTURE_DELAY_MS` so hotkey modifiers can be released, then simulates Cmd/Ctrl+C and restores clipboard contents.
 3. Audio capture stops; pipeline waits for STT finalization.
-4. If polish is enabled, final text is sent to the LLM provider.
+4. If polish is enabled, final text is sent to the LLM provider. A transient failure of the request itself is retried (see [Transient Failure Retry](#transient-failure-retry)).
 5. Output runs (clipboard paste — see [Output Path](#output-path)).
 6. History is stored — **only if `history_enabled`**, re-read here rather than taken from the recording-start config snapshot so a mid-dictation opt-out is honored. When it is off the insert is skipped and only the retention prune runs. See [Storage → Retention](storage.md#retention).
 7. State returns to `Idle`.
+
+## Transient Failure Retry
+
+A 429 or 5xx from the STT or LLM provider used to fail the whole dictation: the user spoke for thirty seconds, waited, and got an error for a call that would have succeeded on a second attempt. Three points in the flow now retry with exponential backoff (3 attempts, 400 ms doubling to 800 ms) — the streaming STT handshake in start step 6, the Whisper-compatible upload that produces the transcript on `disconnect()`, and the request head of the LLM polish in stop step 4.
+
+Retry is deliberately **not** applied to mid-stream calls (`send_audio`, `recv_transcript`), because the STT session is stateful and a resend would reorder or duplicate audio, nor to the LLM response body once chunks have started reaching `llm:chunk`. The full safety table, what counts as transient, and why retries emit no user-facing event live in [Providers → Retry Policy](providers.md#retry-policy).
+
+No new pipeline state or event is involved: from the frontend's point of view a retried dictation is one that simply took a little longer — at most 1.2 s longer for the fast failures retry is meant for.
+
+The interaction to keep in mind when touching either number: retries are also bounded by a 10 s time budget precisely so they cannot outlive `STT_FINALIZE_TIMEOUT_SECS` (120 s). The Whisper-compatible upload runs inside the STT forwarder task, and if it were still retrying when that deadline fired, `stop()` would give up waiting and proceed with the accumulated text — which for a file-based provider is empty, turning a recoverable blip into a lost dictation reported as "no speech".
 
 ## Events
 
@@ -95,8 +105,9 @@ Detecting "landed" from outside the receiving app is **fundamentally limited on 
 - On macOS, if Cmd+C does not change the clipboard, selected text is ignored — this avoids passing stale clipboard content to the LLM.
 - macOS Accessibility permission is checked through raw FFI (`AXIsProcessTrusted`). It is required for output (keystroke synthesis of Cmd+V) and for the correction watcher (focused-field reads). A single grant covers both.
 - Tray tooltip and capsule UI both subscribe to `pipeline:state`; consider both when changing state semantics.
+- Retry stops at the last point where output is still invisible: the STT handshake, the file upload, the LLM request head. Anything past that — audio already sent, chunks already emitted — must not retry.
 
 ## Needs confirmation
 
-- User-facing retry semantics after STT or LLM failure are not documented separately from current code behavior.
+- Whether the silent-retry choice holds in practice — no field data yet on how often a retry fires or how long users perceive the added wait. See [Transient Failure Retry](#transient-failure-retry).
 - `AppConfig.max_recording_seconds` (default 30) is enforced in code; the precise enforcement path should be documented after a focused code review.

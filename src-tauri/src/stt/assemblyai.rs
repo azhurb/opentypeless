@@ -37,20 +37,31 @@ impl AssemblyAiProvider {
 impl SttProvider for AssemblyAiProvider {
     async fn connect(&mut self, config: &SttConfig) -> Result<()> {
         let url = Self::build_url(config);
-        let request = http::Request::builder()
-            .uri(&url)
-            .header("Authorization", &config.api_key)
-            .header("Host", "streaming.assemblyai.com")
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header(
-                "Sec-WebSocket-Key",
-                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
-            )
-            .body(())?;
 
-        let (ws, _) = connect_async(request).await?;
+        // Safe to retry: no session state exists yet, so a failed handshake is
+        // a clean slate. Once connected, nothing else on this provider retries
+        // — see `crate::retry`.
+        let ws = crate::retry::with_retry("AssemblyAI connect", || async {
+            // Each attempt builds its own request: the handshake carries a
+            // single-use `Sec-WebSocket-Key`.
+            let request = http::Request::builder()
+                .uri(&url)
+                .header("Authorization", &config.api_key)
+                .header("Host", "streaming.assemblyai.com")
+                .header("Connection", "Upgrade")
+                .header("Upgrade", "websocket")
+                .header("Sec-WebSocket-Version", "13")
+                .header(
+                    "Sec-WebSocket-Key",
+                    tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+                )
+                .body(())?;
+
+            let (ws, _) = connect_async(request).await?;
+            Ok(ws)
+        })
+        .await?;
+
         self.ws = Some(ws);
         tracing::info!("AssemblyAI WebSocket connected");
         Ok(())

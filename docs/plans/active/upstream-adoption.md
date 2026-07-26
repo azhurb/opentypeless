@@ -30,7 +30,7 @@ Ranked by value per line of change.
 | # | Upstream | What | Why it matters here |
 | --- | --- | --- | --- |
 | 1 | `e2c21d0` | 8 lines of CSS: `html { color-scheme: light }` / `html.dark { color-scheme: dark }` | We have **no** `color-scheme` declaration, and our theme hook toggles exactly `html.dark` (`src/hooks/useTheme.ts:13`). Native `<select>` dropdowns in Settings (STT provider, LLM model, target language, and the new history retention picker) therefore render with light-mode popups in dark theme. Applies verbatim. |
-| 2 | `fc34864` | One pooled `reqwest::Client` in Tauri state instead of per-call construction | We have 11 `reqwest::Client::new()` sites, including one on the dictation hot path (`pipeline.rs`). Each rebuilds a connection pool and re-does the TLS handshake. Straight latency win on the path we just spent two PRs optimizing. |
+| 2 | `fc34864` | One pooled `reqwest::Client` in Tauri state instead of per-call construction | **Landed** — see [`../completed/provider-retry.md`](../completed/provider-retry.md). |
 | 3 | `ca20074` | 22 lines in `lib.rs`: detect NVIDIA + Wayland, disable the DMA-BUF renderer | Fixes a blank-window class of bug on a common Linux configuration. Self-contained, no API surface. |
 | 4 | `99a63e0` | Capsule window config + `useCapsuleResize` change so the capsule can't take focus from the paste target | Directly adjacent to our paste-landing work. Worth checking whether our macOS `NONACTIVATING_PANEL` path already covers it — the Windows/Linux side probably isn't. |
 
@@ -46,7 +46,7 @@ cherry-pickable — these are read-and-reimplement, not `git cherry-pick`.
 | --- | --- | --- | --- |
 | 1 | `09a5ff4` → `credentials.rs`, `commands/credentials.rs`, `keyring` 3.6.3 | API keys move from the config file into the OS credential vault (macOS Keychain / Windows Credential Manager / Linux Secret Service), behind `CredentialVault` / `CredentialSecretReader` / `CredentialSecretRemover` traits | We store `stt_api_key` and `llm_api_key` as plaintext `String`s in `AppConfig`, persisted to `settings.json` by `tauri-plugin-store` (`src-tauri/src/storage/mod.rs:12,15`). For a fork whose whole position is BYOK and local-first, keys sitting in cleartext on disk is the most on-mission gap upstream has already closed. `migrate_legacy_config_secrets` is exactly the migration we'd need — it vaults both keys and **clears them from the config**, with a test (`migrates_plaintext_api_keys_and_clears_config_after_success`). Linux uses `linux-native-sync-persistent` + `crypto-rust`, so no D-Bus requirement. |
 | 2 | `09a5ff4` → `stt/apple_speech.rs` | Apple `SFSpeechRecognizer` as a normal STT provider: 684 lines, pure Rust `objc2` `msg_send!`, no Swift and no build script | On-device (`setRequiresOnDeviceRecognition: true` whenever `supportsOnDeviceRecognition`), no API key, no cost, no network. Serves [Offline And Local Models](../../domain/features.md#offline-and-local-models) at a fraction of the size of local Whisper or Qwen3, which Tier 3 does list. Ships a real availability/authorization model (`AppleSpeechAvailability` with `issue_code`) rather than a bare provider. macOS only. |
-| 3 | `da7b5fd` | 22 lines in `commands/stt.rs`: don't spend OpenAI Whisper quota to run "Test connection" | Ours bills the user to verify their own key. Smallest BYOK win in the whole review. |
+| 3 | `da7b5fd` | 22 lines in `commands/stt.rs`: don't spend OpenAI Whisper quota to run "Test connection" | **Landed** — folded into the provider-retry PR; see [`../completed/provider-retry.md`](../completed/provider-retry.md). |
 
 Two more of the same kind, smaller:
 
@@ -63,12 +63,10 @@ Accessibility grant and never Automation.
 
 ## Tier 2 — worth adopting, real work
 
-- **Exponential-backoff retry for providers** (`3689106` STT, `6855c54` LLM, helper in
-  `7996aee`). We have no retry anywhere in `src-tauri/` — a transient 429 or 502 from
-  Deepgram/AssemblyAI/OpenRouter currently fails the whole dictation. This is the single
-  biggest reliability gap the review turned up. Upstream's version is entangled with their
-  `AppError`/`UserError` type and their cloud providers; port the retry helper and wire it
-  into our three providers rather than taking the diff.
+- ~~**Exponential-backoff retry for providers**~~ (`3689106` STT, `6855c54` LLM, helper in
+  `7996aee`). **Landed** — written against `anyhow` rather than porting upstream's
+  `AppError`/`UserError` entanglement, and scoped to the calls where a second attempt is
+  actually safe. See [`../completed/provider-retry.md`](../completed/provider-retry.md).
 - **Windows output correctness** (`b08618c` SendInput source, `9063f1a` modifier guard,
   `dc38c38` hotkey hook with module handle). Our `src-tauri/src/output/` has no
   `keyboard.rs`, `windows_sendinput.rs`, or `windows_modifier_guard.rs` at all, and there is
@@ -149,12 +147,12 @@ fold `[Unreleased]` into `[0.5.0]` in its own PR, then tag.
 1. Fold `[Unreleased]` → `[0.5.0]`, tag, release. Nothing below starts before this.
 2. Tier 1 #1 (`color-scheme`) — one-line CSS fix; #20 added another native `<select>`
    (the retention picker) that renders a light popup in dark theme today.
-3. Second pass #3 (`da7b5fd`, quota-free connection test) and #1 (keychain migration) — the
-   two on-mission BYOK items. #1 is the larger piece and wants its own PR plus a
-   `docs/architecture/storage.md` update.
-4. Tier 1 #2 (pooled HTTP client) and Tier 2 retry/backoff together — both live in the
-   provider layer, and retry is much less useful without connection reuse. Fold in
-   Second pass `3f9fbc2` (preserve provider errors) here; same code path.
+3. ~~Second pass #3 (`da7b5fd`, quota-free connection test)~~ **done**, and #1 (keychain
+   migration) — the two on-mission BYOK items. #1 is the larger piece and wants its own PR
+   plus a `docs/architecture/storage.md` update, and is the next item up.
+4. ~~Tier 1 #2 (pooled HTTP client) and Tier 2 retry/backoff together~~ **done** — both lived
+   in the provider layer, and retry is much less useful without connection reuse. Second pass
+   `3f9fbc2` (preserve provider errors) was *not* folded in; still open on the same code path.
 5. Second pass #2 (Apple Speech) as its own feature PR — an on-device, key-free provider is
    the most visible user-facing win in the list.
 6. Tier 1 #3/#4 opportunistically.

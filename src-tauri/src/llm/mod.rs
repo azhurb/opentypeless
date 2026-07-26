@@ -70,12 +70,6 @@ pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &str;
 }
 
-pub fn create_provider(
-    _provider_name: &str,
-    client: Option<reqwest::Client>,
-) -> Box<dyn LlmProvider> {
-    match client {
-        Some(c) => Box::new(openai::OpenAiProvider::with_client(c)),
-        None => Box::new(openai::OpenAiProvider::new()),
-    }
+pub fn create_provider(_provider_name: &str, client: reqwest::Client) -> Box<dyn LlmProvider> {
+    Box::new(openai::OpenAiProvider::new(client))
 }

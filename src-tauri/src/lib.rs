@@ -4,6 +4,7 @@ pub mod correction;
 pub mod llm;
 pub mod output;
 pub mod pipeline;
+pub mod retry;
 pub mod storage;
 pub mod stt;
 
@@ -24,6 +25,13 @@ struct HotkeyModeCache(Arc<Mutex<String>>);
 
 /// Cached close_to_tray setting to avoid blocking I/O in the window close handler.
 struct CloseToTrayCache(Arc<Mutex<bool>>);
+
+/// The app-wide pooled HTTP client. `reqwest::Client` is `Arc`-backed, so
+/// clones share one connection pool and its warm TLS sessions; building a fresh
+/// client per call (as every provider and command used to) throws that away and
+/// pays a full handshake each time. The pipeline gets a clone at startup, the
+/// connection-test and benchmark commands read it from managed state.
+pub struct HttpClient(pub reqwest::Client);
 
 /// Managed tray icon handle for dynamic menu/tooltip updates.
 pub struct TrayHandle {
@@ -189,8 +197,65 @@ async fn update_config(
     Ok(())
 }
 
+/// `(endpoint, model, extra_form_fields)` for a Whisper-compatible probe.
+type WhisperCompatTarget = (
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str)],
+);
+
+/// Whisper-compatible endpoints, models and extra form fields used by both the
+/// connection test and the benchmark. `openai-whisper` is absent on purpose —
+/// it is verified with [`check_openai_whisper_model`] instead of an upload.
+fn whisper_compat_test_target(provider: &str) -> WhisperCompatTarget {
+    match provider {
+        "glm-asr" => (
+            "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions",
+            "glm-asr-2512",
+            &[("stream", "false")][..],
+        ),
+        "groq-whisper" => (
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            "whisper-large-v3-turbo",
+            &[][..],
+        ),
+        _ => (
+            "https://api.siliconflow.cn/v1/audio/transcriptions",
+            "FunAudioLLM/SenseVoiceSmall",
+            &[][..],
+        ),
+    }
+}
+
+/// Verify an OpenAI key by reading the Whisper model rather than transcribing.
+///
+/// OpenAI bills every `/audio/transcriptions` call, so probing with a silent
+/// clip charges the user to check their own credentials — a real annoyance in a
+/// BYOK app. A `GET` on the model proves the key is accepted for free. The
+/// other Whisper-compatible providers keep the upload probe; whether they
+/// expose an equivalent per-model endpoint is unverified.
+async fn check_openai_whisper_model(client: &reqwest::Client, api_key: &str) -> Result<(), String> {
+    let resp = client
+        .get("https://api.openai.com/v1/models/whisper-1")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
-async fn test_stt_connection(api_key: String, provider: String) -> Result<bool, String> {
+async fn test_stt_connection(
+    state: tauri::State<'_, HttpClient>,
+    api_key: String,
+    provider: String,
+) -> Result<bool, String> {
     if provider.is_empty() {
         return Ok(false);
     }
@@ -199,9 +264,12 @@ async fn test_stt_connection(api_key: String, provider: String) -> Result<bool, 
         return Ok(false);
     }
 
+    // Deliberately no retry: the user asked whether this key works right now,
+    // and a failure is the answer. See `crate::retry`.
+    let client = &state.0;
+
     match provider.as_str() {
         "deepgram" => {
-            let client = reqwest::Client::new();
             let resp = client
                 .get("https://api.deepgram.com/v1/projects")
                 .header("Authorization", format!("Token {}", api_key))
@@ -212,7 +280,6 @@ async fn test_stt_connection(api_key: String, provider: String) -> Result<bool, 
             Ok(resp.status().is_success())
         }
         "assemblyai" => {
-            let client = reqwest::Client::new();
             let resp = client
                 .get("https://api.assemblyai.com/v2/transcript?limit=1")
                 .header("Authorization", api_key)
@@ -222,31 +289,10 @@ async fn test_stt_connection(api_key: String, provider: String) -> Result<bool, 
                 .map_err(|e| e.to_string())?;
             Ok(resp.status().is_success())
         }
-        "glm-asr" | "openai-whisper" | "groq-whisper" | "siliconflow" => {
-            // All four use Whisper-compatible file upload API
-            let (endpoint, model, extra_fields): (&str, &str, &[(&str, &str)]) =
-                match provider.as_str() {
-                    "glm-asr" => (
-                        "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions",
-                        "glm-asr-2512",
-                        &[("stream", "false")][..],
-                    ),
-                    "openai-whisper" => (
-                        "https://api.openai.com/v1/audio/transcriptions",
-                        "whisper-1",
-                        &[][..],
-                    ),
-                    "groq-whisper" => (
-                        "https://api.groq.com/openai/v1/audio/transcriptions",
-                        "whisper-large-v3-turbo",
-                        &[][..],
-                    ),
-                    _ => (
-                        "https://api.siliconflow.cn/v1/audio/transcriptions",
-                        "FunAudioLLM/SenseVoiceSmall",
-                        &[][..],
-                    ),
-                };
+        "openai-whisper" => Ok(check_openai_whisper_model(client, &api_key).await.is_ok()),
+        "glm-asr" | "groq-whisper" | "siliconflow" => {
+            // All three use the Whisper-compatible file upload API
+            let (endpoint, model, extra_fields) = whisper_compat_test_target(&provider);
 
             let silent_pcm = vec![0u8; 3200]; // 0.1s at 16kHz 16-bit mono
             let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&silent_pcm, 16000);
@@ -262,7 +308,6 @@ async fn test_stt_connection(api_key: String, provider: String) -> Result<bool, 
                 form = form.text(key.to_string(), value.to_string());
             }
 
-            let client = reqwest::Client::new();
             let resp = client
                 .post(endpoint)
                 .header("Authorization", format!("Bearer {}", api_key))
@@ -279,6 +324,7 @@ async fn test_stt_connection(api_key: String, provider: String) -> Result<bool, 
 
 #[tauri::command]
 async fn test_llm_connection(
+    state: tauri::State<'_, HttpClient>,
     api_key: String,
     provider: String,
     base_url: String,
@@ -298,7 +344,6 @@ async fn test_llm_connection(
         return Err("Base URL must use http or https scheme".to_string());
     }
 
-    let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let body = serde_json::json!({
         "model": model,
@@ -306,7 +351,8 @@ async fn test_llm_connection(
         "max_tokens": 1
     });
 
-    let resp = client
+    let resp = state
+        .0
         .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
@@ -320,7 +366,11 @@ async fn test_llm_connection(
 }
 
 #[tauri::command]
-async fn fetch_llm_models(api_key: String, base_url: String) -> Result<Vec<String>, String> {
+async fn fetch_llm_models(
+    state: tauri::State<'_, HttpClient>,
+    api_key: String,
+    base_url: String,
+) -> Result<Vec<String>, String> {
     if base_url.is_empty() {
         return Ok(vec![]);
     }
@@ -331,10 +381,10 @@ async fn fetch_llm_models(api_key: String, base_url: String) -> Result<Vec<Strin
         return Err("Base URL must use http or https scheme".to_string());
     }
 
-    let client = reqwest::Client::new();
     let url = format!("{}/models", base_url.trim_end_matches('/'));
 
-    let resp = client
+    let resp = state
+        .0
         .get(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .timeout(std::time::Duration::from_secs(10))
@@ -371,7 +421,11 @@ async fn fetch_llm_models(api_key: String, base_url: String) -> Result<Vec<Strin
 }
 
 #[tauri::command]
-async fn bench_stt_connection(api_key: String, provider: String) -> Result<u32, String> {
+async fn bench_stt_connection(
+    state: tauri::State<'_, HttpClient>,
+    api_key: String,
+    provider: String,
+) -> Result<u32, String> {
     if provider.is_empty() {
         return Err("No provider specified".to_string());
     }
@@ -380,9 +434,10 @@ async fn bench_stt_connection(api_key: String, provider: String) -> Result<u32, 
         return Err("API key is empty".to_string());
     }
 
+    let client = &state.0;
+
     match provider.as_str() {
         "deepgram" => {
-            let client = reqwest::Client::new();
             let t0 = std::time::Instant::now();
             let resp = client
                 .get("https://api.deepgram.com/v1/projects")
@@ -398,7 +453,6 @@ async fn bench_stt_connection(api_key: String, provider: String) -> Result<u32, 
             Ok(elapsed)
         }
         "assemblyai" => {
-            let client = reqwest::Client::new();
             let t0 = std::time::Instant::now();
             let resp = client
                 .get("https://api.assemblyai.com/v2/transcript?limit=1")
@@ -413,30 +467,13 @@ async fn bench_stt_connection(api_key: String, provider: String) -> Result<u32, 
             }
             Ok(elapsed)
         }
-        "glm-asr" | "openai-whisper" | "groq-whisper" | "siliconflow" => {
-            let (endpoint, model, extra_fields): (&str, &str, &[(&str, &str)]) =
-                match provider.as_str() {
-                    "glm-asr" => (
-                        "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions",
-                        "glm-asr-2512",
-                        &[("stream", "false")][..],
-                    ),
-                    "openai-whisper" => (
-                        "https://api.openai.com/v1/audio/transcriptions",
-                        "whisper-1",
-                        &[][..],
-                    ),
-                    "groq-whisper" => (
-                        "https://api.groq.com/openai/v1/audio/transcriptions",
-                        "whisper-large-v3-turbo",
-                        &[][..],
-                    ),
-                    _ => (
-                        "https://api.siliconflow.cn/v1/audio/transcriptions",
-                        "FunAudioLLM/SenseVoiceSmall",
-                        &[][..],
-                    ),
-                };
+        "openai-whisper" => {
+            let t0 = std::time::Instant::now();
+            check_openai_whisper_model(client, &api_key).await?;
+            Ok(t0.elapsed().as_millis() as u32)
+        }
+        "glm-asr" | "groq-whisper" | "siliconflow" => {
+            let (endpoint, model, extra_fields) = whisper_compat_test_target(&provider);
 
             let silent_pcm = vec![0u8; 3200]; // 0.1s at 16kHz 16-bit mono
             let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&silent_pcm, 16000);
@@ -452,7 +489,6 @@ async fn bench_stt_connection(api_key: String, provider: String) -> Result<u32, 
                 form = form.text(key.to_string(), value.to_string());
             }
 
-            let client = reqwest::Client::new();
             let t0 = std::time::Instant::now();
             let resp = client
                 .post(endpoint)
@@ -474,6 +510,7 @@ async fn bench_stt_connection(api_key: String, provider: String) -> Result<u32, 
 
 #[tauri::command]
 async fn bench_llm_connection(
+    state: tauri::State<'_, HttpClient>,
     api_key: String,
     provider: String,
     base_url: String,
@@ -492,7 +529,6 @@ async fn bench_llm_connection(
         return Err("Base URL must use http or https scheme".to_string());
     }
 
-    let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let body = serde_json::json!({
         "model": model,
@@ -501,7 +537,8 @@ async fn bench_llm_connection(
     });
 
     let t0 = std::time::Instant::now();
-    let resp = client
+    let resp = state
+        .0
         .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
@@ -1116,7 +1153,9 @@ pub fn run() {
                 storage::DictionaryStore::new(db_path)
                     .map_err(|e| anyhow::anyhow!("Failed to init dictionary store: {}", e))?,
             );
-            let pipeline_handle = pipeline::PipelineHandle::new(app_handle.clone());
+            let http_client = reqwest::Client::new();
+            let pipeline_handle =
+                pipeline::PipelineHandle::new(app_handle.clone(), http_client.clone());
 
             // Load initial config to get hotkey
             let initial_config =
@@ -1141,6 +1180,7 @@ pub fn run() {
                 Err(e) => tracing::warn!("history retention prune at startup failed: {}", e),
             }
 
+            app.manage(HttpClient(http_client));
             app.manage(config_manager);
             app.manage(history_store);
             app.manage(dictionary_store);

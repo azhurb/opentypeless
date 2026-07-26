@@ -9,20 +9,19 @@ pub struct OpenAiProvider {
     client: Client,
 }
 
-impl Default for OpenAiProvider {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Wrap a rejected completion so [`crate::retry::is_retryable`] can still see
+/// the status — same reasoning as `stt::whisper_compat::upload_error`.
+fn api_error(status: reqwest::StatusCode, body: &str) -> anyhow::Error {
+    let sanitized = crate::retry::truncate_error_body(body);
+    crate::retry::HttpStatusError::new(status, format!("LLM API error {status}: {sanitized}"))
+        .into()
 }
 
 impl OpenAiProvider {
-    pub fn new() -> Self {
-        Self {
-            client: Client::new(),
-        }
-    }
-
-    pub fn with_client(client: Client) -> Self {
+    /// Takes the app-wide pooled client (`crate::HttpClient`) rather than
+    /// building one, so polish requests reuse a warm connection — and so this
+    /// provider cannot quietly opt out of the pool.
+    pub fn new(client: Client) -> Self {
         Self { client }
     }
 }
@@ -95,29 +94,30 @@ impl LlmProvider for OpenAiProvider {
             }
         }
 
-        let response = self
-            .client
-            .post(format!("{}/chat/completions", config.base_url))
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .timeout(std::time::Duration::from_secs(60))
-            .send()
-            .await?;
+        // Retry covers the request head only. Once the body starts streaming,
+        // chunks have already reached the callback and the frontend has drawn
+        // them, so a second attempt would duplicate visible text — see
+        // `crate::retry`.
+        let response = crate::retry::with_retry("LLM polish", || async {
+            let response = self
+                .client
+                .post(format!("{}/chat/completions", config.base_url))
+                .header("Authorization", format!("Bearer {}", config.api_key))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(60))
+                .send()
+                .await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            // Truncate at a valid UTF-8 char boundary to avoid panic on multi-byte chars
-            let truncate_at = text
-                .char_indices()
-                .take_while(|&(i, _)| i < 200)
-                .last()
-                .map(|(i, c)| i + c.len_utf8())
-                .unwrap_or(text.len());
-            let sanitized = &text[..truncate_at];
-            anyhow::bail!("LLM API error {}: {}", status, sanitized);
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                return Err(api_error(status, &text));
+            }
+
+            Ok(response)
+        })
+        .await?;
 
         if let Some(callback) = on_chunk {
             // Streaming mode
@@ -200,5 +200,34 @@ impl LlmProvider for OpenAiProvider {
 
     fn name(&self) -> &str {
         "OpenAI"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_error_is_retryable_for_rate_limits_and_server_errors() {
+        for status in [
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            reqwest::StatusCode::BAD_GATEWAY,
+        ] {
+            let err = api_error(status, "try later");
+            assert!(
+                crate::retry::is_retryable(&err),
+                "{status} must stay retryable so a blip doesn't drop the polish"
+            );
+        }
+    }
+
+    #[test]
+    fn api_error_is_fatal_for_a_rejected_key() {
+        let err = api_error(reqwest::StatusCode::UNAUTHORIZED, "invalid api key");
+        assert!(!crate::retry::is_retryable(&err));
+        assert_eq!(
+            err.to_string(),
+            "LLM API error 401 Unauthorized: invalid api key"
+        );
     }
 }
