@@ -7,4 +7,4 @@ Lifecycle: when work lands, move the file to `../completed/` if it is useful his
 ## Current Active Plans
 
 - [Dictation startup latency](dictation-startup-latency.md) — close the dead window between hotkey press and first audio sample; fixes #1 (native macOS app detection) and #2 (audio-first reorder) are landed and in user testing; follow-ups #3–#5 deferred.
-- [Upstream adoption review](upstream-adoption.md) — what the 144 upstream commits since the 2026-04-13 fork point contain, and the ranked shortlist worth pulling in (nothing adopted yet).
+- [Upstream adoption review](upstream-adoption.md) — what the 144 upstream commits since the 2026-04-13 fork point contain, and the ranked shortlist worth pulling in (nothing adopted yet). Recommends cutting 0.5.0 before any adoption starts.

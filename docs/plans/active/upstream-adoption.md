@@ -8,7 +8,7 @@ Reviewed 2026-07-26 against upstream [`tover0314-w/opentypeless`](https://github
 | --- | --- |
 | Fork point | `6a4d88a`, 2026-04-13 |
 | Upstream commits we don't have | 144 (tip `b0062ac`, 2026-07-25) |
-| Our commits upstream doesn't have | 46 |
+| Our commits upstream doesn't have | 47 (46 at first review; #20 landed since) |
 | Upstream churn in `src/` + `src-tauri/` | ~78.5k insertions across 251 files |
 
 **Upstream's direction has split from ours.** The bulk of those 78.5k lines is a managed
@@ -33,6 +33,33 @@ Ranked by value per line of change.
 | 2 | `fc34864` | One pooled `reqwest::Client` in Tauri state instead of per-call construction | We have 11 `reqwest::Client::new()` sites, including one on the dictation hot path (`pipeline.rs`). Each rebuilds a connection pool and re-does the TLS handshake. Straight latency win on the path we just spent two PRs optimizing. |
 | 3 | `ca20074` | 22 lines in `lib.rs`: detect NVIDIA + Wayland, disable the DMA-BUF renderer | Fixes a blank-window class of bug on a common Linux configuration. Self-contained, no API surface. |
 | 4 | `99a63e0` | Capsule window config + `useCapsuleResize` change so the capsule can't take focus from the paste target | Directly adjacent to our paste-landing work. Worth checking whether our macOS `NONACTIVATING_PANEL` path already covers it — the Windows/Linux side probably isn't. |
+
+## Second pass — three items the first pass missed
+
+The first pass ranked by commit subject, which hid the best finds. `09a5ff4`, titled
+`feat: prepare v1.1.48 release`, is **not** a version bump: 103 files, +25,348 lines. It
+introduces `credentials.rs`, `commands/credentials.rs`, `stt/apple_speech.rs`,
+`native_hotkey.rs`, `selection.rs`, and scenes in one squash. Nothing inside it is
+cherry-pickable — these are read-and-reimplement, not `git cherry-pick`.
+
+| # | Upstream | What | Why it matters here |
+| --- | --- | --- | --- |
+| 1 | `09a5ff4` → `credentials.rs`, `commands/credentials.rs`, `keyring` 3.6.3 | API keys move from the config file into the OS credential vault (macOS Keychain / Windows Credential Manager / Linux Secret Service), behind `CredentialVault` / `CredentialSecretReader` / `CredentialSecretRemover` traits | We store `stt_api_key` and `llm_api_key` as plaintext `String`s in `AppConfig`, persisted to `settings.json` by `tauri-plugin-store` (`src-tauri/src/storage/mod.rs:12,15`). For a fork whose whole position is BYOK and local-first, keys sitting in cleartext on disk is the most on-mission gap upstream has already closed. `migrate_legacy_config_secrets` is exactly the migration we'd need — it vaults both keys and **clears them from the config**, with a test (`migrates_plaintext_api_keys_and_clears_config_after_success`). Linux uses `linux-native-sync-persistent` + `crypto-rust`, so no D-Bus requirement. |
+| 2 | `09a5ff4` → `stt/apple_speech.rs` | Apple `SFSpeechRecognizer` as a normal STT provider: 684 lines, pure Rust `objc2` `msg_send!`, no Swift and no build script | On-device (`setRequiresOnDeviceRecognition: true` whenever `supportsOnDeviceRecognition`), no API key, no cost, no network. Serves [Offline And Local Models](../../domain/features.md#offline-and-local-models) at a fraction of the size of local Whisper or Qwen3, which Tier 3 does list. Ships a real availability/authorization model (`AppleSpeechAvailability` with `issue_code`) rather than a bare provider. macOS only. |
+| 3 | `da7b5fd` | 22 lines in `commands/stt.rs`: don't spend OpenAI Whisper quota to run "Test connection" | Ours bills the user to verify their own key. Smallest BYOK win in the whole review. |
+
+Two more of the same kind, smaller:
+
+- `3f9fbc2` **preserve STT provider errors** (89 lines, `pipeline.rs`) — surface the provider's
+  actual error instead of collapsing it into a generic failure. BYOK users debug their own
+  keys, endpoints, and quotas, so the real message is the whole value.
+- `dfb8ab8` **prevent recording cancel crashes** — take only the frontend half
+  (`CapsuleRecording` / `CapsuleProcessing` cancel buttons + tests); the Rust half is in
+  `stt/cloud.rs` and doesn't apply.
+
+**Do not adopt `selection.rs` as-is.** It copies the selection by shelling out to
+`osascript` → System Events, the exact path PR #7 removed so that macOS needs only the
+Accessibility grant and never Automation.
 
 ## Tier 2 — worth adopting, real work
 
@@ -95,11 +122,40 @@ Managed cloud STT/LLM, auth and OAuth deep-link flow, subscriptions/entitlements
 "ask anything" cloud flow, Vercel deployment, managed recording limits, Buy Me a Coffee
 funding link. These implement the product direction our fork exists to avoid.
 
+## Release first, then adopt
+
+**Cut 0.5.0 before pulling anything in.** As of 2026-07-26 exactly one commit sits after the
+`v0.4.0` tag — `2628837` (#20, history toggle + retention) — and it carries three user-facing
+`[Unreleased]` entries, including the macOS-only "Clear All History did nothing" fix. Reasons
+to ship that first rather than after:
+
+- **Bisectability.** The two highest-value adoptions land in the same places #20 just changed:
+  Second pass #1 rewrites how `AppConfig` persists secrets (`storage/mod.rs`, the file #20's
+  retention config lives in), and Tier 2 retry touches the provider layer. A `v0.5.0` tag
+  draws the line between our own work and upstream-derived work, so a later regression is one
+  bisect instead of an argument.
+- **Release CI needs attention of its own.** Tag-push triggers stall on this fork and need
+  babysitting; don't debug the release pipeline and freshly-ported foreign code in the same
+  sitting.
+- **#20 is verified, the adoptions aren't.** Shipping the tested thing now costs one fold PR
+  plus a tag.
+
+Gate: finish the manual pass on #20's history toggle and retention picker (a `tauri dev`
+build was running against `2628837` for this). Then the documented fold-before-tag ordering —
+fold `[Unreleased]` into `[0.5.0]` in its own PR, then tag.
+
 ## Suggested order
 
-1. Tier 1 #1 (`color-scheme`) — do it with, or right after, the history-retention PR, since
-   that PR adds another native `<select>`.
-2. Tier 1 #2 (pooled HTTP client) and Tier 2 retry/backoff together — both live in the
-   provider layer, and retry is much less useful without connection reuse.
-3. Tier 1 #3/#4 opportunistically.
-4. Decide the Windows question before spending anything on Tier 2's Windows group.
+1. Fold `[Unreleased]` → `[0.5.0]`, tag, release. Nothing below starts before this.
+2. Tier 1 #1 (`color-scheme`) — one-line CSS fix; #20 added another native `<select>`
+   (the retention picker) that renders a light popup in dark theme today.
+3. Second pass #3 (`da7b5fd`, quota-free connection test) and #1 (keychain migration) — the
+   two on-mission BYOK items. #1 is the larger piece and wants its own PR plus a
+   `docs/architecture/storage.md` update.
+4. Tier 1 #2 (pooled HTTP client) and Tier 2 retry/backoff together — both live in the
+   provider layer, and retry is much less useful without connection reuse. Fold in
+   Second pass `3f9fbc2` (preserve provider errors) here; same code path.
+5. Second pass #2 (Apple Speech) as its own feature PR — an on-device, key-free provider is
+   the most visible user-facing win in the list.
+6. Tier 1 #3/#4 opportunistically.
+7. Decide the Windows question before spending anything on Tier 2's Windows group.
