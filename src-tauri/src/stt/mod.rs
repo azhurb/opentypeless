@@ -71,6 +71,7 @@ pub fn create_provider(provider_name: &str, client: reqwest::Client) -> Box<dyn 
         Box::new(WhisperCompatProvider::new(cfg, client.clone()))
     };
     match provider_name {
+        "deepgram" => Box::new(deepgram::DeepgramProvider::new()),
         "assemblyai" => Box::new(assemblyai::AssemblyAiProvider::new()),
         "glm-asr" => make(WhisperCompatConfig {
             provider_name: "GLM-ASR",
