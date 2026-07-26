@@ -1,4 +1,9 @@
 {
+  "common": {
+    "cancel": "取消",
+    "confirm": "确定",
+    "delete": "删除"
+  },
   "app": {
     "name": "OpenTypeless",
     "tagline": "AI 语音输入",
@@ -150,7 +155,15 @@
     "tauriReact": "Tauri v2 + React",
     "view": "查看",
     "maxRecordingDuration": "最大录音时长",
-    "hideCapsuleWhenIdle": "空闲时隐藏胶囊"
+    "hideCapsuleWhenIdle": "空闲时隐藏胶囊",
+    "history": "历史记录",
+    "saveHistory": "保存听写历史记录",
+    "keepHistoryFor": "历史记录保留时长",
+    "retentionForever": "永久保留",
+    "retentionDays": "{{days}} 天",
+    "retentionHintForever": "记录会一直保留，直到你手动删除。",
+    "retentionHintDays": "超过 {{days}} 天的记录会被自动删除，已保存的记录也包括在内；即使关闭保存，该期限依然生效。",
+    "retentionConfirm": "将历史记录保留 {{days}} 天？\n\n保存后，超过该期限的记录将被删除，且无法撤销。"
   },
   "dictionary": {
     "word": "词语",
@@ -185,7 +198,8 @@
     "clearAll": "清除所有历史记录",
     "clearConfirm": "确定要清除所有历史记录吗？此操作无法撤销。",
     "failedToCopy": "复制到剪贴板失败",
-    "failedToClear": "清除历史记录失败"
+    "failedToClear": "清除历史记录失败",
+    "savingDisabled": "保存已关闭 — 新的听写不会记录在此。以下记录会保留，但你设置的保留期限依然对它们生效。"
   },
   "error": {
     "somethingWentWrong": "出了点问题",

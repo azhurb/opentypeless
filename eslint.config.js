@@ -15,7 +15,37 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+      // WKWebView only shows JS dialogs when the host implements WKUIDelegate's
+      // runJavaScriptConfirmPanelWithMessage: / AlertPanel: / TextInputPanel: —
+      // and wry implements none of them. So on macOS these return falsy (or do
+      // nothing) without displaying anything, which silently turned
+      // `if (!window.confirm(...)) return` into a permanent early return and made
+      // "Clear All History" a no-op. Use src/components/ConfirmDialog.tsx.
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'window',
+          property: 'confirm',
+          message:
+            'Silently returns false on macOS (WKWebView has no JS-dialog delegate in wry). Use ConfirmDialog instead.',
+        },
+        {
+          object: 'window',
+          property: 'alert',
+          message:
+            'Silently does nothing on macOS (WKWebView has no JS-dialog delegate in wry). Use toast() instead.',
+        },
+        {
+          object: 'window',
+          property: 'prompt',
+          message:
+            'Silently returns null on macOS (WKWebView has no JS-dialog delegate in wry). Use an in-app input instead.',
+        },
+      ],
     },
   },
   {

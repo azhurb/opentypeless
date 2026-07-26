@@ -153,11 +153,31 @@ async fn update_config(
     state: tauri::State<'_, storage::ConfigManager>,
     cache: tauri::State<'_, HotkeyModeCache>,
     close_tray_cache: tauri::State<'_, CloseToTrayCache>,
+    history: tauri::State<'_, storage::HistoryStore>,
     config: storage::AppConfig,
 ) -> Result<(), String> {
     *cache.0.lock().unwrap_or_else(|e| e.into_inner()) = config.hotkey_mode.clone();
     *close_tray_cache.0.lock().unwrap_or_else(|e| e.into_inner()) = config.close_to_tray;
     state.save(&config).await.map_err(|e| e.to_string())?;
+    // Apply the (possibly lowered) history retention immediately, so the user
+    // sees the setting take effect on Save instead of at next launch. A failed
+    // DELETE must not fail the save — the config itself is already persisted.
+    let pruned = history
+        .prune_older_than(config.history_retention_days)
+        .await;
+    match pruned {
+        Ok(0) => {}
+        Ok(removed) => {
+            tracing::info!("history retention pruned {} entries", removed);
+            // `config:changed` only replaces each webview's config copy, so without
+            // this the History pane keeps listing the rows we just deleted and the
+            // user concludes the setting did nothing.
+            if let Err(e) = app.emit("history:changed", ()) {
+                tracing::warn!("failed to emit history:changed: {}", e);
+            }
+        }
+        Err(e) => tracing::warn!("history retention prune failed: {}", e),
+    }
     // Broadcast to every webview (main + capsule) so each window's Zustand
     // can replace its local config copy without an app restart. The capsule
     // is the load-bearing case — its show/hide is derived from
@@ -1097,6 +1117,24 @@ pub fn run() {
             let initial_config =
                 tauri::async_runtime::block_on(config_manager.load()).unwrap_or_default();
             let shortcut = parse_hotkey(&initial_config.hotkey).unwrap_or_else(default_shortcut);
+
+            // Enforce history retention once at launch. This is the path that
+            // matters when history is disabled: nothing is inserted, so the
+            // insert-time prune never runs and old rows would linger forever.
+            // Logged even on success: this is the one destructive prune that runs
+            // unattended, so without a count a user reporting "my history is gone"
+            // can't be distinguished from db corruption or an accidental Clear all.
+            match tauri::async_runtime::block_on(
+                history_store.prune_older_than(initial_config.history_retention_days),
+            ) {
+                Ok(0) => {}
+                Ok(removed) => tracing::info!(
+                    "history retention pruned {} entries at startup (retention {} days)",
+                    removed,
+                    initial_config.history_retention_days
+                ),
+                Err(e) => tracing::warn!("history retention prune at startup failed: {}", e),
+            }
 
             app.manage(config_manager);
             app.manage(history_store);

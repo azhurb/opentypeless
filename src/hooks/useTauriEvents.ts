@@ -125,6 +125,17 @@ export function useTauriEvents() {
         })
     })
 
+    // Emitted when Rust deletes history rows behind the UI's back — currently the
+    // retention prune after a settings save. Without this the History pane keeps
+    // listing entries that are already gone from SQLite.
+    addListener<void>('history:changed', () => {
+      getHistory(200, 0)
+        .then(setHistory)
+        .catch((err) => {
+          console.error('Failed to refresh history:', err)
+        })
+    })
+
     // Rust broadcasts the full AppConfig after every persisted update so
     // every webview (main Settings pane, capsule) can replace its local
     // Zustand copy. The capsule is the load-bearing consumer — its

@@ -1,4 +1,9 @@
 {
+  "common": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete"
+  },
   "app": {
     "name": "OpenTypeless",
     "tagline": "AI Voice Input",
@@ -150,7 +155,15 @@
     "tauriReact": "Tauri v2 + React",
     "view": "View",
     "maxRecordingDuration": "Max Recording Duration",
-    "hideCapsuleWhenIdle": "Hide capsule when idle"
+    "hideCapsuleWhenIdle": "Hide capsule when idle",
+    "history": "History",
+    "saveHistory": "Save dictation history",
+    "keepHistoryFor": "Keep history for",
+    "retentionForever": "Forever",
+    "retentionDays": "{{days}} days",
+    "retentionHintForever": "Entries are kept until you delete them.",
+    "retentionHintDays": "Entries older than {{days}} days are deleted automatically, including ones already saved and even while saving is off.",
+    "retentionConfirm": "Keep history for {{days}} days?\n\nEntries older than that will be deleted when you save. This cannot be undone."
   },
   "dictionary": {
     "word": "Word",
@@ -185,7 +198,8 @@
     "clearAll": "Clear All History",
     "clearConfirm": "Are you sure you want to clear all history? This cannot be undone.",
     "failedToCopy": "Failed to copy to clipboard",
-    "failedToClear": "Failed to clear history"
+    "failedToClear": "Failed to clear history",
+    "savingDisabled": "Saving is off — new dictations won't be recorded here. Entries below stay, but your retention setting still applies to them."
   },
   "error": {
     "somethingWentWrong": "Something went wrong",

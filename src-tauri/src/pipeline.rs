@@ -956,25 +956,42 @@ impl PipelineHandle {
             }),
         );
 
-        // Save to history
-        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        let entry = storage::HistoryEntry {
-            id: 0, // auto-increment
-            created_at: now,
-            app_name: app_ctx.app_name,
-            app_type: format!("{:?}", app_ctx.app_type),
-            raw_text,
-            polished_text: final_text.clone(),
-            language: detected_language.clone(),
-            duration_ms,
-        };
-        if let Err(e) = self
-            .app_handle
-            .state::<storage::HistoryStore>()
-            .add(entry)
+        // Save to history — skipped entirely when the user has turned history off.
+        //
+        // Deliberately re-read here instead of using `config`, which was snapshotted
+        // at recording start: in toggle mode a dictation can outlive the user opting
+        // out mid-utterance, and recording something they just turned off is the one
+        // failure this switch exists to prevent. `load_config` is cache-backed.
+        let history_config = self.load_config().await;
+        let history_store = self.app_handle.state::<storage::HistoryStore>();
+        if history_config.history_enabled {
+            let now = chrono::Local::now()
+                .format(storage::HISTORY_TIMESTAMP_FORMAT)
+                .to_string();
+            let entry = storage::HistoryEntry {
+                id: 0, // auto-increment
+                created_at: now,
+                app_name: app_ctx.app_name,
+                app_type: format!("{:?}", app_ctx.app_type),
+                raw_text,
+                polished_text: final_text.clone(),
+                language: detected_language.clone(),
+                duration_ms,
+            };
+            if let Err(e) = history_store
+                .add(entry, history_config.history_retention_days)
+                .await
+            {
+                tracing::error!("Failed to save history: {}", e);
+            }
+        } else if let Err(e) = history_store
+            .prune_older_than(history_config.history_retention_days)
             .await
         {
-            tracing::error!("Failed to save history: {}", e);
+            // With saving off there is no insert, so `add`'s prune never runs. Without
+            // this branch a long-running session would honour the retention window
+            // only at launch or on the next settings save.
+            tracing::warn!("history retention prune failed: {}", e);
         }
 
         // Learn-from-corrections: watch for the user fixing one word in our typed output.

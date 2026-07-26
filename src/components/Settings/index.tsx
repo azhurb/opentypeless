@@ -1,7 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import { useAppStore } from '../../stores/appStore'
 import { SettingsSidebar, type PaneId } from './SettingsSidebar'
 import { GeneralPane } from './GeneralPane'
 import { SttPane } from './SttPane'
@@ -20,15 +19,16 @@ const paneTitleKeys: Record<PaneId, string> = {
 
 export function Settings() {
   const [activePane, setActivePane] = useState<PaneId>('general')
-  const config = useAppStore((s) => s.config)
-  const setSavedConfig = useAppStore((s) => s.setSavedConfig)
   const isDirty = useDirtyConfig()
   const { t } = useTranslation()
 
-  // Snapshot config when settings opens
-  useEffect(() => {
-    setSavedConfig(config)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // No snapshot on mount. `savedConfig` already tracks what Rust has on disk
+  // (seeded by the initial load, refreshed by `setConfig` on `config:changed`).
+  // Re-snapshotting here used to silently adopt *unsaved* edits as the baseline,
+  // so leaving Settings dirty and coming back made the "Unsaved changes" bar
+  // disappear while the edits were never persisted — visible with the history
+  // toggle, where the History pane would then claim saving was off while the
+  // backend kept recording.
 
   return (
     <div className="w-full h-full bg-bg-primary text-text-primary flex flex-col">

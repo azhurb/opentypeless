@@ -11,7 +11,7 @@ Evidence: `README.md`, `src-tauri/src/pipeline.rs`, `src-tauri/src/llm/prompt.rs
 3. STT provider transcribes speech.
 4. LLM provider optionally polishes or translates the transcript.
 5. App pastes the result into the focused field via the system clipboard, chunking the paste when the target is a terminal-hosted CLI ([Pipeline → Output Path](../architecture/pipeline.md#output-path)).
-6. App stores a local history entry.
+6. App stores a local history entry, unless the user has turned history saving off ([Feature map → Optional History And Retention](features.md#optional-history-and-retention)).
 
 ## User-Facing Modes
 

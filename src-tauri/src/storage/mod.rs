@@ -28,6 +28,11 @@ pub struct AppConfig {
     pub ui_language: String,
     pub capsule_auto_hide: bool,
     pub learn_from_corrections_enabled: bool,
+    /// When false, completed dictations are typed but never written to the
+    /// history table. Rows already stored stay readable.
+    pub history_enabled: bool,
+    /// Age limit for history rows, in days. `0` means keep forever.
+    pub history_retention_days: u32,
 }
 
 impl Default for AppConfig {
@@ -56,6 +61,8 @@ impl Default for AppConfig {
             ui_language: "en".to_string(),
             capsule_auto_hide: false,
             learn_from_corrections_enabled: false,
+            history_enabled: true,
+            history_retention_days: 0,
         }
     }
 }
@@ -111,12 +118,31 @@ impl ConfigManager {
                 Some(val) => {
                     let mut v = val.clone();
                     let mutated = migrate_legacy_config(&mut v);
-                    let parsed = serde_json::from_value::<AppConfig>(v).unwrap_or_default();
+                    let parsed = match serde_json::from_value::<AppConfig>(v) {
+                        Ok(config) => config,
+                        Err(e) => {
+                            // We still have to start, but falling back silently is
+                            // not acceptable: the defaults re-enable opt-outs the
+                            // user deliberately turned off (history recording,
+                            // learn-from-corrections), and if the value also needs
+                            // legacy migration we then persist those defaults over
+                            // their settings. At minimum the reason must be logged.
+                            tracing::error!(
+                                "failed to parse app_config, falling back to defaults \
+                                 (this re-enables history recording and other opt-outs): {}",
+                                e
+                            );
+                            AppConfig::default()
+                        }
+                    };
                     (parsed, mutated)
                 }
                 None => (AppConfig::default(), false),
             },
-            Err(_) => (AppConfig::default(), false),
+            Err(e) => {
+                tracing::warn!("failed to open settings.json store, using defaults: {}", e);
+                (AppConfig::default(), false)
+            }
         };
 
         *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(config.clone());
@@ -148,8 +174,15 @@ impl ConfigManager {
 
 // ─── HistoryStore (SQLite backed) ───
 
-/// Maximum number of history entries to retain. Older entries are pruned on insert.
+/// Hard backstop on history size, applied regardless of the user's age-based
+/// retention setting. Older entries are pruned on insert.
 const MAX_HISTORY_ENTRIES: u32 = 5000;
+
+/// Format `created_at` is written in — naive **local** time, fixed width, so
+/// lexicographic string ordering equals chronological ordering. Age-based
+/// pruning builds its cutoff with this same format and compares as text; using
+/// UTC here would skew every cutoff by the machine's offset.
+pub const HISTORY_TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
@@ -163,6 +196,40 @@ pub struct HistoryEntry {
     pub duration_ms: Option<i64>,
 }
 
+/// Fold the WAL back into the main database and truncate it. `secure_delete`
+/// scrubs pages in the main file, but the deleted rows' text can still sit in the
+/// `-wal` sidecar until a checkpoint happens on its own schedule. Best-effort: a
+/// failed checkpoint is not worth failing a delete over, and the next one retries.
+///
+/// Note this scrubs content, it does not shrink the file — reclaiming space would
+/// need a `VACUUM`, which is not worth blocking on here.
+fn checkpoint_wal(conn: &Connection) {
+    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+        tracing::warn!("history wal checkpoint after delete failed: {}", e);
+    }
+}
+
+/// Upper bound on `history_retention_days`, ~100 years. `history_retention_days`
+/// is a `u32` read from `settings.json`, so a hand edit, a corrupted write, or a
+/// bad import can hand us a value that overflows chrono — and `chrono`'s `Sub`
+/// **panics** rather than erroring. The startup prune runs inside Tauri `setup`,
+/// where that panic aborts launch with no in-app way to recover, so the value is
+/// clamped before it reaches chrono at all.
+const MAX_RETENTION_DAYS: u32 = 36_500;
+
+/// The `created_at` string every row older than the retention window sorts
+/// before. `None` when retention is "forever" (`0`) or when the subtraction
+/// would leave the representable date range — both mean "prune nothing", which
+/// is the safe direction to fail in.
+fn retention_cutoff(retention_days: u32) -> Option<String> {
+    if retention_days == 0 {
+        return None;
+    }
+    let days = i64::from(retention_days.min(MAX_RETENTION_DAYS));
+    let cutoff = chrono::Local::now().checked_sub_signed(chrono::Duration::days(days))?;
+    Some(cutoff.format(HISTORY_TIMESTAMP_FORMAT).to_string())
+}
+
 pub struct HistoryStore {
     conn: Mutex<Connection>,
 }
@@ -170,7 +237,12 @@ pub struct HistoryStore {
 impl HistoryStore {
     pub fn new(db_path: PathBuf) -> Result<Self> {
         let conn = Connection::open(&db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        // `secure_delete` overwrites freed pages instead of just returning them to
+        // the freelist. Without it, retention and "Clear all" leave the transcript
+        // text of "deleted" dictations readable in the db file — the exact thing an
+        // age limit on a privacy-first app is supposed to prevent. The write cost is
+        // irrelevant for a table this small.
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,7 +260,10 @@ impl HistoryStore {
         })
     }
 
-    pub async fn add(&self, entry: HistoryEntry) -> Result<()> {
+    /// Insert one entry, then apply both retention rules under the same lock:
+    /// the `MAX_HISTORY_ENTRIES` backstop and, when `retention_days > 0`, the
+    /// user's age limit. Keeping policy here means no caller can insert past it.
+    pub async fn add(&self, entry: HistoryEntry, retention_days: u32) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
             "INSERT INTO history (created_at, app_name, app_type, raw_text, polished_text, language, duration_ms)
@@ -210,7 +285,35 @@ impl HistoryStore {
             rusqlite::params![MAX_HISTORY_ENTRIES],
         )?;
 
+        if let Some(cutoff) = retention_cutoff(retention_days) {
+            conn.execute(
+                "DELETE FROM history WHERE created_at < ?1",
+                rusqlite::params![cutoff],
+            )?;
+        }
+
         Ok(())
+    }
+
+    /// Delete every row older than `retention_days`. Returns the number of rows
+    /// removed; `retention_days == 0` means "keep forever" and is a no-op.
+    ///
+    /// Called at startup and after a config save, not just on insert — with
+    /// history disabled nothing is ever inserted, so insert-time pruning alone
+    /// would let rows outlive their retention window indefinitely.
+    pub async fn prune_older_than(&self, retention_days: u32) -> Result<usize> {
+        let Some(cutoff) = retention_cutoff(retention_days) else {
+            return Ok(0);
+        };
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let removed = conn.execute(
+            "DELETE FROM history WHERE created_at < ?1",
+            rusqlite::params![cutoff],
+        )?;
+        if removed > 0 {
+            checkpoint_wal(&conn);
+        }
+        Ok(removed)
     }
 
     pub async fn list(&self, limit: u32, offset: u32) -> Result<Vec<HistoryEntry>> {
@@ -241,6 +344,7 @@ impl HistoryStore {
     pub async fn clear(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute("DELETE FROM history", [])?;
+        checkpoint_wal(&conn);
         Ok(())
     }
 }
@@ -604,5 +708,143 @@ mod dictionary_tests {
         // Second open must not error (would otherwise re-run ALTERs and fail).
         let _ = DictionaryStore::new(path.clone()).unwrap();
         let _ = DictionaryStore::new(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    fn uuid_like() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        format!("{}-{}", nanos, N.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn temp_store() -> HistoryStore {
+        let dir = std::env::temp_dir().join(format!("otl-hist-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("hist-{}.db", uuid_like()));
+        HistoryStore::new(path).unwrap()
+    }
+
+    /// A row stamped `days_ago` days before now, in the same local-time format
+    /// the pipeline writes.
+    fn entry_aged(days_ago: i64, text: &str) -> HistoryEntry {
+        let created = chrono::Local::now() - chrono::Duration::days(days_ago);
+        HistoryEntry {
+            id: 0,
+            created_at: created.format(HISTORY_TIMESTAMP_FORMAT).to_string(),
+            app_name: "Slack".to_string(),
+            app_type: "Chat".to_string(),
+            raw_text: text.to_string(),
+            polished_text: text.to_string(),
+            language: None,
+            duration_ms: Some(1200),
+        }
+    }
+
+    async fn stored_texts(store: &HistoryStore) -> Vec<String> {
+        store
+            .list(100, 0)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.polished_text)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn retention_cutoff_is_none_for_forever() {
+        assert!(retention_cutoff(0).is_none());
+        assert!(retention_cutoff(30).is_some());
+    }
+
+    /// A hand-edited or corrupted `history_retention_days` must not reach chrono
+    /// unclamped: chrono *panics* on out-of-range durations, and the startup prune
+    /// runs inside Tauri `setup`, where that panic aborts launch for good.
+    #[tokio::test]
+    async fn retention_cutoff_survives_absurd_day_counts() {
+        for days in [u32::MAX, 999_999_999, MAX_RETENTION_DAYS + 1] {
+            let cutoff = retention_cutoff(days);
+            assert!(
+                cutoff.is_some(),
+                "clamped cutoff must still be produced for {} days",
+                days
+            );
+            assert_eq!(
+                cutoff,
+                retention_cutoff(MAX_RETENTION_DAYS),
+                "{} days must clamp to MAX_RETENTION_DAYS",
+                days
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn absurd_retention_prunes_nothing_instead_of_panicking() {
+        let store = temp_store();
+        store.add(entry_aged(400, "ancient"), 0).await.unwrap();
+        // Clamped to ~100 years, so a 400-day-old row is well inside the window.
+        assert_eq!(store.prune_older_than(u32::MAX).await.unwrap(), 0);
+        assert_eq!(stored_texts(&store).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_survives_absurd_retention() {
+        let store = temp_store();
+        store.add(entry_aged(0, "fresh"), u32::MAX).await.unwrap();
+        assert_eq!(stored_texts(&store).await, vec!["fresh".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn prune_older_than_zero_keeps_everything() {
+        let store = temp_store();
+        store.add(entry_aged(400, "ancient"), 0).await.unwrap();
+        store.add(entry_aged(0, "fresh"), 0).await.unwrap();
+
+        assert_eq!(store.prune_older_than(0).await.unwrap(), 0);
+        assert_eq!(stored_texts(&store).await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn prune_older_than_drops_only_rows_past_the_cutoff() {
+        let store = temp_store();
+        store.add(entry_aged(100, "ancient"), 0).await.unwrap();
+        store.add(entry_aged(31, "just-too-old"), 0).await.unwrap();
+        store.add(entry_aged(29, "just-inside"), 0).await.unwrap();
+        store.add(entry_aged(0, "fresh"), 0).await.unwrap();
+
+        assert_eq!(store.prune_older_than(30).await.unwrap(), 2);
+        let remaining = stored_texts(&store).await;
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&"just-inside".to_string()));
+        assert!(remaining.contains(&"fresh".to_string()));
+    }
+
+    #[tokio::test]
+    async fn add_applies_retention_to_already_stored_rows() {
+        let store = temp_store();
+        // Stored while retention was "forever"…
+        store.add(entry_aged(90, "ancient"), 0).await.unwrap();
+        // …then the user picks 30 days and dictates again.
+        store.add(entry_aged(0, "fresh"), 30).await.unwrap();
+
+        assert_eq!(stored_texts(&store).await, vec!["fresh".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn clear_removes_every_row() {
+        let store = temp_store();
+        store.add(entry_aged(1, "one"), 0).await.unwrap();
+        store.add(entry_aged(0, "two"), 0).await.unwrap();
+
+        store.clear().await.unwrap();
+        assert!(stored_texts(&store).await.is_empty());
     }
 }
