@@ -1,3 +1,10 @@
+[default]
+# Git commit SHAs are cited throughout docs/, and hex digits routinely spell
+# words — "4c7caf5" contains "caf", and dead/beef/fade/added are all valid hex.
+# Ignoring backtick-quoted hex runs fixes the whole class instead of
+# allowlisting each accident as it appears.
+extend-ignore-re = ["`[0-9a-f]{7,40}`"]
+
 [default.extend-words]
 # Allow these "words" that typos might flag
 cpal = "cpal"
@@ -5,6 +12,10 @@ stt = "stt"
 llm = "llm"
 byok = "byok"
 hotkey = "hotkey"
+# Fragments of hyphenated English compounds: typos splits on the hyphen, so
+# "mis-fires" / "mis-parse" surface as "mis", and "look-alikes" as "alikes".
+mis = "mis"
+alikes = "alikes"
 
 [files]
 extend-exclude = [
@@ -15,23 +26,9 @@ extend-exclude = [
   "*.min.js",
   "*.min.css",
   "CHANGELOG.md",
-  "README_ar.md",
-  "README_de.md",
-  "README_es.md",
-  "README_fr.md",
-  "README_hi.md",
-  "README_id.md",
-  "README_it.md",
-  "README_ja.md",
-  "README_ko.md",
-  "README_nl.md",
-  "README_pl.md",
-  "README_pt.md",
-  "README_ru.md",
-  "README_th.md",
-  "README_tr.md",
-  "README_vi.md",
-  "README_zh.md",
+  # The README_<lang>.md exclusions that used to live here are gone: this fork
+  # dropped the upstream README translations in 97a351d, so they only described
+  # files that no longer exist.
 ]
 
 [default.extend-identifiers]
