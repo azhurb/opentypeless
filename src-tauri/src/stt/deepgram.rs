@@ -208,8 +208,7 @@ mod tests {
     }
 }
 
-type WsStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+use super::WsStream;
 
 pub struct DeepgramProvider {
     ws: Option<WsStream>,
@@ -291,14 +290,24 @@ impl SttProvider for DeepgramProvider {
     }
 
     async fn disconnect(&mut self) -> Result<DisconnectResult> {
-        if let Some(ws) = &mut self.ws {
-            let close_msg = serde_json::json!({"type": "CloseStream"});
-            let _ = ws.send(Message::Text(close_msg.to_string())).await;
-            let _ = ws.close(None).await;
-        }
+        let drained = match &mut self.ws {
+            Some(ws) => {
+                // Deepgram answers `CloseStream` by flushing the results it is
+                // still holding, so read those out before the socket goes away.
+                let close_msg = serde_json::json!({"type": "CloseStream"});
+                let _ = ws.send(Message::Text(close_msg.to_string())).await;
+                let drained = super::drain_final_text(ws, parse_result_message).await;
+                let _ = ws.close(None).await;
+                drained
+            }
+            None => None,
+        };
         self.ws = None;
+        if let Some((text, _)) = &drained {
+            tracing::info!("Deepgram flushed {} chars on close", text.len());
+        }
         tracing::info!("Deepgram disconnected");
-        Ok(None)
+        Ok(drained)
     }
 
     fn name(&self) -> &str {
