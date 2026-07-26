@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
-## [Unreleased]
+## [0.6.0] - 2026-07-26
 
 ### Added
 - A transient provider failure no longer throws away the dictation you just spoke. A 429 or 5xx from the STT or LLM — the kind that succeeds on a second attempt — used to surface as an error after you had already talked for thirty seconds and waited. Three points now retry with exponential backoff (3 attempts, 400 ms doubling to 800 ms): the streaming STT WebSocket handshake, the Whisper-compatible file upload that produces the transcript, and the LLM polish request. Retries are silent — the capsule already shows a progress state, and a "retrying 2/3" badge would make a recovery you were never meant to notice look like a fault — so at worst a failing dictation takes 1.2 s longer to report the same error. A 10 s time budget keeps that promise: retries only stack while failures are cheap, so a provider that hangs for a minute still surfaces its error instead of being retried into a multi-minute wait. Retry deliberately stops where output becomes visible: mid-stream audio is never resent (that would reorder or duplicate it), and the LLM response is never re-requested once polished text has started streaming to the capsule. Bad keys, malformed requests and exhausted quotas still fail on the first attempt, since retrying them only delays the error you need to see. See [`docs/architecture/providers.md`](docs/architecture/providers.md#retry-policy).
