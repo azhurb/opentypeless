@@ -6,6 +6,5 @@ Lifecycle: when work lands, move the file to `../completed/` if it is useful his
 
 ## Current Active Plans
 
-- [Keychain migration](keychain-migration.md) — handoff brief for the next piece of work: API keys move out of plaintext `settings.json` into the OS credential vault. Nothing implemented yet; the one decision to make first is whether the webview ever sees a key again after saving.
 - [Dictation startup latency](dictation-startup-latency.md) — close the dead window between hotkey press and first audio sample; fixes #1 (native macOS app detection) and #2 (audio-first reorder) are landed and in user testing; follow-ups #3–#5 deferred.
 - [Upstream adoption review](upstream-adoption.md) — what the 144 upstream commits since the 2026-04-13 fork point contain, and the ranked shortlist worth pulling in. 0.5.0 is cut, the `color-scheme` item is landed (#26) and provider retry is landed (see [`../completed/provider-retry.md`](../completed/provider-retry.md)); the rest is open.

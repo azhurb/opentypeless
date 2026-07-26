@@ -22,7 +22,7 @@ Adoption decisions and where each stands. Nothing here is blocked on upstream.
 | Tier 1 #2 — pooled `reqwest::Client` | Adopt | **Landed** (#31) |
 | Second pass #3 — quota-free OpenAI connection test | Adopt | **Landed** (#31) |
 | Tier 2 — provider retry with backoff | Adopt, rewrite not port | **Landed** (#31), see [`../completed/provider-retry.md`](../completed/provider-retry.md) |
-| Second pass #1 — keychain migration | Adopt | **Next up** — brief in [`keychain-migration.md`](keychain-migration.md) |
+| Second pass #1 — keychain migration | Adopt, rewrite not port | **Landed** (#36), see [`../completed/keychain-migration.md`](../completed/keychain-migration.md) |
 | Second pass, small — `3f9fbc2` preserve STT provider errors | Adopt | Open. Same code path as the retry work; deliberately not folded in |
 | Second pass #2 — Apple Speech on-device STT | Adopt as its own feature | Open |
 | Tier 1 #3 — NVIDIA/Wayland DMA-BUF workaround | Adopt | Open |
@@ -177,13 +177,15 @@ fold `[Unreleased]` into `[0.5.0]` in its own PR, then tag.
 ## Suggested order
 
 1. ~~Fold `[Unreleased]` → `[0.5.0]`, tag, release.~~ **done** — `v0.5.0` is cut. Ten commits
-   have accumulated since; a `0.6.0` fold is available whenever wanted, and the same
-   bisectability argument applies before the keychain work touches `storage/mod.rs`.
+   have accumulated since; a `0.6.0` fold is available whenever wanted. The keychain work
+   has now landed on top of `storage/mod.rs` without a fold, so the bisect line the review
+   argued for is not there — worth weighing before the next storage-shaped change.
 2. ~~Tier 1 #1 (`color-scheme`)~~ **done** (#26).
-3. ~~Second pass #3 (`da7b5fd`, quota-free connection test)~~ **done**, and #1 (keychain
-   migration) — the two on-mission BYOK items. #1 is the larger piece and wants its own PR
-   plus a `docs/architecture/storage.md` update, and is **the next item up**: see
-   [`keychain-migration.md`](keychain-migration.md).
+3. ~~Second pass #3 (`da7b5fd`, quota-free connection test) and #1 (keychain migration)~~
+   **both done** — the two on-mission BYOK items. #1 landed in #36 with the
+   `docs/architecture/storage.md` update; see
+   [`../completed/keychain-migration.md`](../completed/keychain-migration.md) for where the
+   implementation diverged from the brief.
 4. ~~Tier 1 #2 (pooled HTTP client) and Tier 2 retry/backoff together~~ **done** — both lived
    in the provider layer, and retry is much less useful without connection reuse. Second pass
    `3f9fbc2` (preserve provider errors) was *not* folded in; still open on the same code path.
