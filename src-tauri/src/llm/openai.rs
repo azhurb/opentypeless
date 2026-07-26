@@ -91,10 +91,7 @@ impl LlmProvider for OpenAiProvider {
         // Other providers silently ignore the field.
         if config.model.contains("gemini") {
             if let Some(obj) = body.as_object_mut() {
-                obj.insert(
-                    "reasoning_effort".to_string(),
-                    serde_json::json!("none"),
-                );
+                obj.insert("reasoning_effort".to_string(), serde_json::json!("none"));
             }
         }
 

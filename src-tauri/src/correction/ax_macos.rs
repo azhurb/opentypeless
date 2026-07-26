@@ -21,17 +21,10 @@ extern "C" {
     fn CFGetTypeID(cf: *mut c_void) -> usize;
     fn CFStringGetTypeID() -> usize;
     fn CFStringGetLength(s: *mut c_void) -> isize;
-    fn CFStringGetCString(
-        s: *mut c_void,
-        buffer: *mut u8,
-        buffer_size: isize,
-        encoding: u32,
-    ) -> u8;
-    fn CFStringCreateWithCString(
-        alloc: *mut c_void,
-        cstr: *const u8,
-        encoding: u32,
-    ) -> *mut c_void;
+    fn CFStringGetCString(s: *mut c_void, buffer: *mut u8, buffer_size: isize, encoding: u32)
+        -> u8;
+    fn CFStringCreateWithCString(alloc: *mut c_void, cstr: *const u8, encoding: u32)
+        -> *mut c_void;
 }
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x08000100;

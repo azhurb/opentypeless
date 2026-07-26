@@ -92,18 +92,13 @@ mod tests {
     #[test]
     fn build_form_pins_single_language() {
         let fields = build_form_text_fields("whisper-1", &["en".to_string()], &[]);
-        assert!(fields
-            .iter()
-            .any(|(k, v)| k == "language" && v == "en"));
+        assert!(fields.iter().any(|(k, v)| k == "language" && v == "en"));
     }
 
     #[test]
     fn build_form_omits_language_when_multiple_selected() {
-        let fields = build_form_text_fields(
-            "whisper-1",
-            &["en".to_string(), "de".to_string()],
-            &[],
-        );
+        let fields =
+            build_form_text_fields("whisper-1", &["en".to_string(), "de".to_string()], &[]);
         assert!(
             !fields.iter().any(|(k, _)| k == "language"),
             "Whisper API cannot take multiple language hints; the request must omit the field and auto-detect"
@@ -120,11 +115,7 @@ mod tests {
 
     #[test]
     fn build_form_includes_model_and_extras() {
-        let fields = build_form_text_fields(
-            "glm-asr-2512",
-            &[],
-            &[("stream", "false")],
-        );
+        let fields = build_form_text_fields("glm-asr-2512", &[], &[("stream", "false")]);
         assert!(fields
             .iter()
             .any(|(k, v)| k == "model" && v == "glm-asr-2512"));
@@ -165,7 +156,10 @@ mod tests {
     fn parse_response_returns_none_for_unknown_language_name() {
         let body = r#"{"text": "Hi", "language": "klingon"}"#;
         let (_, lang) = parse_response(body).unwrap();
-        assert_eq!(lang, None, "unknown language names fall back to None, not crash");
+        assert_eq!(
+            lang, None,
+            "unknown language names fall back to None, not crash"
+        );
     }
 
     #[test]

@@ -22,14 +22,7 @@ afterEach(() => {
 // Lucide icons render as SVGs; nothing test-relevant. framer-motion is
 // stripped (the AnimatePresence wrapper would otherwise hide content during
 // exit animations and confuse synchronous getByText).
-const MOTION_PROPS = new Set([
-  'initial',
-  'animate',
-  'exit',
-  'transition',
-  'whileHover',
-  'whileTap',
-])
+const MOTION_PROPS = new Set(['initial', 'animate', 'exit', 'transition', 'whileHover', 'whileTap'])
 vi.mock('framer-motion', () => ({
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   motion: new Proxy(

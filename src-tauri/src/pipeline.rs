@@ -247,7 +247,10 @@ impl PipelineHandle {
     /// Stops audio capture, forces state to Idle, and signals any
     /// ongoing stop() to exit early via abort_flag.
     pub fn abort(&self) {
-        tracing::info!("Pipeline abort requested (current state: {:?})", self.current_state());
+        tracing::info!(
+            "Pipeline abort requested (current state: {:?})",
+            self.current_state()
+        );
 
         // Set abort flag so any running stop() exits early
         self.abort_flag.store(true, Ordering::SeqCst);
@@ -265,8 +268,14 @@ impl PipelineHandle {
         self.stt_done.notify_one();
 
         // Clear accumulated text + detected language
-        self.accumulated_text.lock().unwrap_or_else(|e| e.into_inner()).clear();
-        *self.detected_language.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.accumulated_text
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        *self
+            .detected_language
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
 
         // Force state to Idle — emits pipeline:state event to sync frontend
         self.set_state(PipelineState::Idle);
@@ -381,9 +390,7 @@ impl PipelineHandle {
                 crate::audio::MicAuthStatus::Denied | crate::audio::MicAuthStatus::Restricted
             ) {
                 let _ = self.app_handle.emit("pipeline:error", "MICROPHONE_DENIED");
-                let _ = self
-                    .app_handle
-                    .emit("permissions:mic_status", &status);
+                let _ = self.app_handle.emit("permissions:mic_status", &status);
                 anyhow::bail!("MICROPHONE_DENIED");
             }
         }
@@ -869,10 +876,7 @@ impl PipelineHandle {
                         return Ok(());
                     }
                     final_text = response.polished_text;
-                    if let Err(e) = self
-                        .output_text(&final_text, &app_ctx)
-                        .await
-                    {
+                    if let Err(e) = self.output_text(&final_text, &app_ctx).await {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
                             .app_handle
@@ -889,10 +893,7 @@ impl PipelineHandle {
                     let _ = self
                         .app_handle
                         .emit("pipeline:error", format!("LLM polishing failed: {e}"));
-                    if let Err(e) = self
-                        .output_text(&final_text, &app_ctx)
-                        .await
-                    {
+                    if let Err(e) = self.output_text(&final_text, &app_ctx).await {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
                             .app_handle
@@ -915,10 +916,7 @@ impl PipelineHandle {
         } else {
             llm_elapsed = std::time::Duration::ZERO;
             final_text = raw_text.clone();
-            if let Err(e) = self
-                .output_text(&final_text, &app_ctx)
-                .await
-            {
+            if let Err(e) = self.output_text(&final_text, &app_ctx).await {
                 tracing::error!("Output failed: {}", e);
                 let _ = self
                     .app_handle
@@ -1005,29 +1003,23 @@ impl PipelineHandle {
                         .inner()
                         .clone();
                     let app_handle = self.app_handle.clone();
-                    let handle = crate::correction::spawn(
-                        field,
-                        dictionary,
-                        typed,
-                        move |sugg| {
-                            let payload = serde_json::json!({
-                                "rowId": sugg.row_id,
-                                "old": sugg.old,
-                                "new": sugg.new,
-                                "autoConfirmMs": sugg.auto_confirm_ms,
-                            });
-                            if let Err(e) =
-                                app_handle.emit_to("capsule", "correction:suggest", payload)
-                            {
-                                tracing::warn!("failed to emit correction:suggest: {}", e);
-                            }
-                            // Tell every window the dictionary just changed so the
-                            // Settings → Dictionary list re-fetches without a restart.
-                            if let Err(e) = app_handle.emit("dictionary:changed", ()) {
-                                tracing::warn!("failed to emit dictionary:changed: {}", e);
-                            }
-                        },
-                    );
+                    let handle = crate::correction::spawn(field, dictionary, typed, move |sugg| {
+                        let payload = serde_json::json!({
+                            "rowId": sugg.row_id,
+                            "old": sugg.old,
+                            "new": sugg.new,
+                            "autoConfirmMs": sugg.auto_confirm_ms,
+                        });
+                        if let Err(e) = app_handle.emit_to("capsule", "correction:suggest", payload)
+                        {
+                            tracing::warn!("failed to emit correction:suggest: {}", e);
+                        }
+                        // Tell every window the dictionary just changed so the
+                        // Settings → Dictionary list re-fetches without a restart.
+                        if let Err(e) = app_handle.emit("dictionary:changed", ()) {
+                            tracing::warn!("failed to emit dictionary:changed: {}", e);
+                        }
+                    });
                     *self
                         .current_correction
                         .lock()
@@ -1040,11 +1032,7 @@ impl PipelineHandle {
         Ok(())
     }
 
-    async fn output_text(
-        &self,
-        text: &str,
-        app_ctx: &app_detector::AppContext,
-    ) -> Result<()> {
+    async fn output_text(&self, text: &str, app_ctx: &app_detector::AppContext) -> Result<()> {
         self.set_state(PipelineState::Outputting);
 
         // Paste relies on CGEventPost; without Accessibility the OS silently
@@ -1082,7 +1070,9 @@ impl PipelineHandle {
             let _ = self.app_handle.emit_to("capsule", "output:no_target", ());
         }
 
-        let _ = self.app_handle.emit("pipeline:target_app", &app_ctx.app_name);
+        let _ = self
+            .app_handle
+            .emit("pipeline:target_app", &app_ctx.app_name);
 
         Ok(())
     }
@@ -1207,7 +1197,10 @@ mod tests {
     #[test]
     fn output_error_wraps_other_errors() {
         let err = anyhow::anyhow!("Connection refused");
-        assert_eq!(output_error_message(&err), "Output failed: Connection refused");
+        assert_eq!(
+            output_error_message(&err),
+            "Output failed: Connection refused"
+        );
     }
 
     #[test]

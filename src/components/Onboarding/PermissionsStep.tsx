@@ -80,7 +80,10 @@ export function PermissionsStep() {
           {micGranted ? (
             <ShieldCheck size={14} className="text-green-500 shrink-0" />
           ) : (
-            <Mic size={14} className={micBlocked ? 'text-red-500 shrink-0' : 'text-amber-500 shrink-0'} />
+            <Mic
+              size={14}
+              className={micBlocked ? 'text-red-500 shrink-0' : 'text-amber-500 shrink-0'}
+            />
           )}
           <span className="text-[12px] font-medium text-text-primary">
             {t('permissions.microphone.title')}

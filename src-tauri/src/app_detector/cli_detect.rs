@@ -222,8 +222,8 @@ mod macos_proc {
                 // be the version string. argv[0] carries the real CLI name.
                 // Fall back to `pbsi_comm` when argv[0] is unavailable (e.g.
                 // other-user or kernel processes we can't read args for).
-                let name = argv0_basename(pid as i32)
-                    .unwrap_or_else(|| comm_to_string(&info.pbsi_comm));
+                let name =
+                    argv0_basename(pid as i32).unwrap_or_else(|| comm_to_string(&info.pbsi_comm));
                 out.push(Proc {
                     pid: info.pbsi_pid as i32,
                     ppid: info.pbsi_ppid as i32,

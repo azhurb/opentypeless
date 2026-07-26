@@ -20,14 +20,7 @@ afterEach(() => {
 })
 
 // framer-motion noise stripper (mirrors Settings.test.tsx)
-const MOTION_PROPS = new Set([
-  'initial',
-  'animate',
-  'exit',
-  'transition',
-  'whileHover',
-  'whileTap',
-])
+const MOTION_PROPS = new Set(['initial', 'animate', 'exit', 'transition', 'whileHover', 'whileTap'])
 vi.mock('framer-motion', () => ({
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   motion: new Proxy(

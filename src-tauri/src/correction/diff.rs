@@ -85,10 +85,7 @@ pub fn find_single_word_substitution(
 /// one word substitution. No internal anchoring — the caller has located the
 /// dictated region via surrounding-context anchors and passes the trimmed
 /// inner span as `current`.
-pub fn find_word_substitution_in_spans(
-    original: &str,
-    current: &str,
-) -> Option<WordSubstitution> {
+pub fn find_word_substitution_in_spans(original: &str, current: &str) -> Option<WordSubstitution> {
     let b_words = collect_words(original);
     let all_c_words = collect_words(current);
     compare_word_lists(&b_words, &all_c_words)
@@ -104,7 +101,10 @@ fn collect_words(s: &str) -> Vec<&str> {
         .collect()
 }
 
-fn compare_word_lists<'a>(b_words: &[&'a str], all_c_words: &[&'a str]) -> Option<WordSubstitution> {
+fn compare_word_lists<'a>(
+    b_words: &[&'a str],
+    all_c_words: &[&'a str],
+) -> Option<WordSubstitution> {
     let n = b_words.len();
     // current must have at least as many words as baseline (deletions are rejected).
     if all_c_words.len() < n || n == 0 {
@@ -122,7 +122,8 @@ fn compare_word_lists<'a>(b_words: &[&'a str], all_c_words: &[&'a str]) -> Optio
             diff_pos = Some(i);
         }
     }
-    let i = diff_pos?; // None means no change
+    // None means no change.
+    let i = diff_pos?;
     // Guard against word insertion (rather than substitution): if the old word
     // still appears anywhere after position i in all_c_words, it was shifted by
     // an insertion — not substituted.
@@ -186,7 +187,13 @@ mod tests {
         let baseline = "Hello Timmy how are you ";
         let current = "Hello Tim how are you ";
         let got = find_single_word_substitution(baseline, current, "Hello Timmy how are you ");
-        assert_eq!(got, Some(WordSubstitution { old: "Timmy".into(), new: "Tim".into() }));
+        assert_eq!(
+            got,
+            Some(WordSubstitution {
+                old: "Timmy".into(),
+                new: "Tim".into()
+            })
+        );
     }
 
     #[test]
@@ -194,7 +201,13 @@ mod tests {
         let baseline = "Hi Timmy. ";
         let current = "Hi Tim, my friend. ";
         let got = find_single_word_substitution(baseline, current, "Hi Timmy. ");
-        assert_eq!(got, Some(WordSubstitution { old: "Timmy".into(), new: "Tim".into() }));
+        assert_eq!(
+            got,
+            Some(WordSubstitution {
+                old: "Timmy".into(),
+                new: "Tim".into()
+            })
+        );
     }
 
     #[test]
@@ -229,27 +242,28 @@ mod tests {
         let baseline = "I love München ";
         let current = "I love Munich ";
         let got = find_single_word_substitution(baseline, current, baseline);
-        assert_eq!(got, Some(WordSubstitution { old: "München".into(), new: "Munich".into() }));
+        assert_eq!(
+            got,
+            Some(WordSubstitution {
+                old: "München".into(),
+                new: "Munich".into()
+            })
+        );
     }
 
     #[test]
     fn rejects_word_addition_inside_span() {
-        assert!(find_single_word_substitution(
-            "Hello Tim ",
-            "Hello dear Tim ",
-            "Hello Tim ",
-        )
-        .is_none());
+        assert!(
+            find_single_word_substitution("Hello Tim ", "Hello dear Tim ", "Hello Tim ",).is_none()
+        );
     }
 
     #[test]
     fn rejects_word_deletion_inside_span() {
-        assert!(find_single_word_substitution(
-            "Hello dear Tim ",
-            "Hello Tim ",
-            "Hello dear Tim ",
-        )
-        .is_none());
+        assert!(
+            find_single_word_substitution("Hello dear Tim ", "Hello Tim ", "Hello dear Tim ",)
+                .is_none()
+        );
     }
 
     #[test]
@@ -299,9 +313,15 @@ mod tests {
         // lands on ü's continuation byte (0xBC).  Without snap_floor the raw slice
         // baseline[8..16] panics; snap_floor walks back to byte 7 (start of ü).
         let baseline = "aaaaaaa\u{FC}xxxxxx Timmy ";
-        let current  = "aaaaaaa\u{FC}xxxxxx Tim ";
+        let current = "aaaaaaa\u{FC}xxxxxx Tim ";
         assert_eq!(baseline.find("Timmy ").unwrap(), 16);
         let got = find_single_word_substitution(baseline, current, "Timmy ");
-        assert_eq!(got, Some(WordSubstitution { old: "Timmy".into(), new: "Tim".into() }));
+        assert_eq!(
+            got,
+            Some(WordSubstitution {
+                old: "Timmy".into(),
+                new: "Tim".into()
+            })
+        );
     }
 }
