@@ -85,6 +85,26 @@ cargo test --manifest-path src-tauri/Cargo.toml test_parse_hotkey_ctrl_slash
 
 `npm audit --audit-level=high` and `cargo audit --file src-tauri/Cargo.lock` run in the `audit` job and are `continue-on-error: true`.
 
+## Housekeeping Workflows
+
+`.github/workflows/lock-threads.yml` locks closed issues and PRs after 60 days of inactivity,
+nightly at 00:00 UTC. It also accepts `workflow_dispatch`, because a `schedule`-only workflow
+cannot be tested from a branch — the trigger exists so a change to it can be verified without
+waiting a day:
+
+```bash
+gh workflow run lock-threads.yml
+gh run list --workflow lock-threads.yml --limit 5
+```
+
+**A manual run is not a dry run** — `dessant/lock-threads` has no such mode, so a dispatch locks
+every thread that qualifies. Locking is reversible from the thread's own menu, but it is a real
+mutation on real PRs; check what qualifies before dispatching.
+
+Note that issues are disabled on this repository, so the `issue-*` inputs and the `issues: write`
+permission are currently inert — only PRs are ever locked. They are kept so the workflow behaves
+correctly if issues are enabled later.
+
 ## Releases
 
 Releases are tag-driven. `.github/workflows/release.yml` triggers on tags matching `v*` and on manual `workflow_dispatch`.
