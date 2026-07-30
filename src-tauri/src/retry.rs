@@ -92,37 +92,102 @@ pub fn is_retryable_status(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
 }
 
-/// Whether a failure is transient enough to be worth another attempt.
+/// Why a provider call failed, at the granularity two callers need: the retry
+/// policy below, and the user-facing message the pipeline puts in the capsule.
 ///
-/// Walks the `anyhow` cause chain so callers keep using `.context(...)` freely;
-/// the first recognized cause decides. An unrecognized error is treated as
-/// fatal — retrying something we cannot classify risks repeating a side effect.
-pub fn is_retryable(err: &anyhow::Error) -> bool {
-    for cause in err.chain() {
-        if let Some(e) = cause.downcast_ref::<HttpStatusError>() {
-            return is_retryable_status(e.status);
-        }
-        if let Some(e) = cause.downcast_ref::<reqwest::Error>() {
-            return e.is_timeout() || e.is_connect() || e.status().is_some_and(is_retryable_status);
-        }
-        if let Some(e) = cause.downcast_ref::<tokio_tungstenite::tungstenite::Error>() {
-            return is_retryable_websocket(e);
-        }
-    }
-    false
+/// Both want the same distinctions and neither wants to duplicate the cause-chain
+/// walk, so the classification lives here once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// The provider answered and rejected the request with this status.
+    Status(StatusCode),
+    /// The request went out and nothing came back before the deadline.
+    Timeout,
+    /// The connection never opened — DNS, refused, reset.
+    Unreachable,
+    /// Nothing recognizable in the chain. The conservative bucket for both
+    /// callers: no retry, and no advice more specific than "provider error".
+    Unknown,
 }
 
-fn is_retryable_websocket(err: &tokio_tungstenite::tungstenite::Error) -> bool {
+/// Classify a provider failure.
+///
+/// Walks the `anyhow` cause chain so callers keep using `.context(...)` freely;
+/// the first recognized cause decides.
+pub fn classify(err: &anyhow::Error) -> FailureKind {
+    for cause in err.chain() {
+        if let Some(e) = cause.downcast_ref::<HttpStatusError>() {
+            return FailureKind::Status(e.status);
+        }
+        if let Some(e) = cause.downcast_ref::<reqwest::Error>() {
+            return classify_reqwest(e);
+        }
+        if let Some(e) = cause.downcast_ref::<tokio_tungstenite::tungstenite::Error>() {
+            return classify_websocket(e);
+        }
+    }
+    FailureKind::Unknown
+}
+
+fn classify_reqwest(err: &reqwest::Error) -> FailureKind {
+    if err.is_timeout() {
+        return FailureKind::Timeout;
+    }
+    if err.is_connect() {
+        return FailureKind::Unreachable;
+    }
+    match err.status() {
+        Some(status) => FailureKind::Status(status),
+        None => FailureKind::Unknown,
+    }
+}
+
+fn classify_websocket(err: &tokio_tungstenite::tungstenite::Error) -> FailureKind {
     use tokio_tungstenite::tungstenite::Error as WsError;
     match err {
         // Refused / reset / DNS failure at the socket layer — the transient case.
-        WsError::Io(_) => true,
+        WsError::Io(_) => FailureKind::Unreachable,
         // The handshake got an HTTP response; same status rule as REST.
-        WsError::Http(response) => is_retryable_status(response.status()),
+        WsError::Http(response) => FailureKind::Status(response.status()),
         // Protocol, TLS and capacity failures are deterministic for the same
         // request, and `AlreadyClosed` / `ConnectionClosed` mean the caller is
         // using a dead session rather than failing to open one.
-        _ => false,
+        _ => FailureKind::Unknown,
+    }
+}
+
+/// Whether a rate-limit error is about a per-day budget rather than a per-minute
+/// one. Providers phrase it in their own words — Groq says "on tokens per day
+/// (TPD)", OpenAI "requests per day" — so this matches the substrings they share.
+/// A missed match costs precision, not correctness: the caller falls back to
+/// treating the limit as the short-lived kind.
+pub fn mentions_daily_limit(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    ["per day", "(tpd)", "(rpd)", "daily"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+/// Whether a failure is transient enough to be worth another attempt.
+///
+/// An unrecognized error is treated as fatal — retrying something we cannot
+/// classify risks repeating a side effect.
+pub fn is_retryable(err: &anyhow::Error) -> bool {
+    match classify(err) {
+        FailureKind::Status(status) => {
+            // The one exception a status code alone cannot express: a 429 against a
+            // per-*day* budget will still be a 429 in 1.2 s, so the retries only
+            // delay the error. Whether the limit is daily is in the body, not the
+            // status, which is why this lives here rather than in
+            // `is_retryable_status`.
+            if status == StatusCode::TOO_MANY_REQUESTS && mentions_daily_limit(&format!("{err:#}"))
+            {
+                return false;
+            }
+            is_retryable_status(status)
+        }
+        FailureKind::Timeout | FailureKind::Unreachable => true,
+        FailureKind::Unknown => false,
     }
 }
 
@@ -285,6 +350,98 @@ mod tests {
         assert!(
             !is_retryable(&unauthorized),
             "a rejected key must surface immediately"
+        );
+    }
+
+    #[test]
+    fn classify_reports_the_status_the_provider_answered_with() {
+        // The pipeline words its capsule message off the status, so the exact
+        // code has to survive the trip through `anyhow` and any `.context()`.
+        assert_eq!(
+            classify(&status_error(429)),
+            FailureKind::Status(StatusCode::TOO_MANY_REQUESTS)
+        );
+        assert_eq!(
+            classify(&status_error(401).context("polishing transcript")),
+            FailureKind::Status(StatusCode::UNAUTHORIZED)
+        );
+    }
+
+    #[test]
+    fn classify_separates_a_dead_socket_from_a_rejected_request() {
+        use tokio_tungstenite::tungstenite::Error as WsError;
+
+        let refused: anyhow::Error = WsError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "refused",
+        ))
+        .into();
+        assert_eq!(classify(&refused), FailureKind::Unreachable);
+
+        let rejected: anyhow::Error = WsError::Http(
+            http::Response::builder()
+                .status(403)
+                .body(None)
+                .expect("valid response"),
+        )
+        .into();
+        assert_eq!(
+            classify(&rejected),
+            FailureKind::Status(StatusCode::FORBIDDEN)
+        );
+    }
+
+    #[test]
+    fn daily_limit_detection_reads_the_phrasings_providers_use() {
+        assert!(mentions_daily_limit(
+            "Rate limit reached ... on tokens per day (TPD): Limit 100000, Used 99261"
+        ));
+        assert!(mentions_daily_limit("Limit 100000 requests per day"));
+        assert!(mentions_daily_limit("your daily budget is exhausted"));
+        assert!(mentions_daily_limit("rate limit exceeded (RPD)"));
+        assert!(
+            !mentions_daily_limit("Rate limit reached on tokens per minute (TPM)"),
+            "a per-minute limit must stay in the retryable bucket"
+        );
+    }
+
+    #[test]
+    fn does_not_retry_a_per_day_quota() {
+        // 1.2 s of backoff cannot outlast a daily budget, so the attempts only
+        // delay the error — and the user waited through them for nothing.
+        let err = HttpStatusError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "LLM API error 429: Rate limit reached for model `llama-3.3-70b-versatile` \
+             on tokens per day (TPD): Limit 100000, Used 99261",
+        )
+        .into();
+        assert!(!is_retryable(&err));
+        assert!(
+            is_retryable_status(StatusCode::TOO_MANY_REQUESTS),
+            "the exception belongs to the error, not the status — a bare 429 stays retryable"
+        );
+    }
+
+    #[test]
+    fn still_retries_a_per_minute_rate_limit() {
+        let err = HttpStatusError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "LLM API error 429: Rate limit reached on tokens per minute (TPM). \
+             Please try again in 1.4s",
+        )
+        .into();
+        assert!(
+            is_retryable(&err),
+            "a limit that clears in seconds is exactly what the backoff is for"
+        );
+    }
+
+    #[test]
+    fn classify_falls_back_to_unknown() {
+        assert_eq!(
+            classify(&anyhow::anyhow!("audio exceeds maximum length")),
+            FailureKind::Unknown,
+            "an error with no recognizable cause must not be given a specific meaning"
         );
     }
 

@@ -151,6 +151,54 @@ fn output_error_message(e: &anyhow::Error) -> String {
     format!("Output failed: {e}")
 }
 
+// Which step of the pipeline a failure belongs to, as the capsule names it.
+// Short on purpose — see `provider_error_message` for the width budget.
+const STAGE_SPEECH: &str = "Speech";
+const STAGE_POLISH: &str = "Polish";
+const STAGE_EDIT: &str = "Edit";
+
+/// A provider failure, worded for the capsule.
+///
+/// The error pill is one truncated line about 29 characters wide, and provider
+/// error bodies are JSON: Groq's 429 spends its first ~140 bytes on the model
+/// name, the organization ID and the service tier before saying anything about a
+/// limit. Echoing the body therefore showed the user the prefix and nothing
+/// else — a rate limit read as "Could not edit the selected te…". The full error
+/// still reaches the log at error level; this is only what the capsule says, so
+/// keep every result under that budget.
+fn provider_error_message(stage: &str, e: &anyhow::Error) -> String {
+    use crate::retry::FailureKind;
+
+    let reason = match crate::retry::classify(e) {
+        FailureKind::Status(status) => match status.as_u16() {
+            // A per-day budget needs different advice from a per-minute one: one
+            // clears while the user waits, the other not until tomorrow.
+            429 if crate::retry::mentions_daily_limit(&format!("{e:#}")) => "daily quota reached",
+            429 => "rate limited",
+            401 | 403 => "API key rejected",
+            402 => "out of credit",
+            404 => "model not found",
+            413 => "request too large",
+            500..=599 => "provider unavailable",
+            _ => "provider error",
+        },
+        FailureKind::Timeout => "provider timed out",
+        FailureKind::Unreachable => "cannot reach provider",
+        FailureKind::Unknown => "provider error",
+    };
+    format!("{stage}: {reason}")
+}
+
+/// What the capsule says when the transcript came back empty.
+///
+/// "No speech detected" is only true when transcription itself worked. When STT
+/// failed, that error is the answer: it was already emitted from the STT task and
+/// then overwritten here, so a rate-limited or rejected provider presented itself
+/// as a microphone problem and sent the user looking at the wrong thing.
+fn empty_transcript_message(stt_error: Option<String>) -> String {
+    stt_error.unwrap_or_else(|| "No speech detected".to_string())
+}
+
 /// Delay before capturing selected text to ensure hotkey modifiers are released.
 const SELECTED_TEXT_CAPTURE_DELAY_MS: u64 = 60;
 /// Delay after simulating Ctrl+C to let the clipboard update.
@@ -202,6 +250,10 @@ pub struct PipelineHandle {
     /// Populated from `TranscriptEvent::Final.language` (streaming) or from
     /// the second element of the `disconnect()` tuple (file-based).
     detected_language: Arc<Mutex<Option<String>>>,
+    /// Why STT failed on this run, if it did. Read by the empty-transcript branch
+    /// in `stop()`, which would otherwise blame the microphone for a provider
+    /// failure. Cleared wherever `accumulated_text` is.
+    stt_error: Arc<Mutex<Option<String>>>,
     stt_done: Arc<Notify>,
     abort_flag: Arc<AtomicBool>,
     preloaded_config: Arc<Mutex<Option<storage::AppConfig>>>,
@@ -231,6 +283,7 @@ impl PipelineHandle {
             audio_volume: Arc::new(Mutex::new(0.0)),
             accumulated_text: Arc::new(Mutex::new(String::new())),
             detected_language: Arc::new(Mutex::new(None)),
+            stt_error: Arc::new(Mutex::new(None)),
             stt_done: Arc::new(Notify::new()),
             abort_flag: Arc::new(AtomicBool::new(false)),
             preloaded_config: Arc::new(Mutex::new(None)),
@@ -297,7 +350,7 @@ impl PipelineHandle {
         // Unblock stop() if it's waiting on stt_done.notified()
         self.stt_done.notify_one();
 
-        // Clear accumulated text + detected language
+        // Clear accumulated text + detected language + any STT failure
         self.accumulated_text
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -306,6 +359,7 @@ impl PipelineHandle {
             .detected_language
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
+        *self.stt_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
 
         // Force state to Idle — emits pipeline:state event to sync frontend
         self.set_state(PipelineState::Idle);
@@ -469,7 +523,7 @@ impl PipelineHandle {
         }
         crate::refresh_tray(&self.app_handle);
 
-        // Clear accumulated text + detected language
+        // Clear accumulated text + detected language + any STT failure
         self.accumulated_text
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -478,6 +532,7 @@ impl PipelineHandle {
             .detected_language
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
+        *self.stt_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
         // Clear the slot here so a fresh recording can't observe a leftover
         // value. It's filled either by the Accessibility preflight below or, when
         // that comes up empty, by the Cmd+C fallback in stop().
@@ -646,10 +701,10 @@ impl PipelineHandle {
         let mut provider =
             stt::create_provider(&config_data.stt_provider, self.shared_client.clone());
         if let Err(e) = provider.connect(&stt_config).await {
-            tracing::error!("STT connect failed: {}", e);
+            tracing::error!("STT connect failed: {:#}", e);
             let _ = self
                 .app_handle
-                .emit("pipeline:error", format!("STT connection failed: {e}"));
+                .emit("pipeline:error", provider_error_message(STAGE_SPEECH, &e));
             self.cleanup_failed_start();
             return Ok(());
         }
@@ -670,6 +725,7 @@ impl PipelineHandle {
         let app_handle = self.app_handle.clone();
         let accumulated = self.accumulated_text.clone();
         let detected_lang = self.detected_language.clone();
+        let stt_failure = self.stt_error.clone();
         let stt_done = self.stt_done.clone();
 
         tokio::spawn(async move {
@@ -698,8 +754,14 @@ impl PipelineHandle {
                                     }
                                     Ok(None) => {}
                                     Err(e) => {
-                                        tracing::error!("STT disconnect error: {}", e);
-                                        let _ = app_handle.emit("pipeline:error", format!("STT error: {e}"));
+                                        tracing::error!("STT disconnect error: {:#}", e);
+                                        // Recorded as well as emitted: with no transcript
+                                        // to show, stop() would otherwise overwrite this
+                                        // with "No speech detected".
+                                        let message = provider_error_message(STAGE_SPEECH, &e);
+                                        *stt_failure.lock().unwrap_or_else(|e| e.into_inner()) =
+                                            Some(message.clone());
+                                        let _ = app_handle.emit("pipeline:error", message);
                                     }
                                 }
                                 break;
@@ -726,14 +788,27 @@ impl PipelineHandle {
                             }
                             Ok(Some(TranscriptEvent::Error { message })) => {
                                 tracing::error!("STT error: {}", message);
-                                let _ = app_handle.emit("pipeline:error", format!("STT error: {message}"));
+                                // A streaming provider's own words — there's no status to
+                                // classify, so pass it through under the same prefix.
+                                let reported = format!("{STAGE_SPEECH}: {message}");
+                                *stt_failure.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Some(reported.clone());
+                                let _ = app_handle.emit("pipeline:error", reported);
                                 // Break out of the loop — STT has failed, no point
                                 // continuing. Without break, the loop keeps running
                                 // and the pipeline stays stuck in Recording forever.
                                 break;
                             }
                             Err(e) => {
-                                tracing::error!("STT recv error: {}", e);
+                                tracing::error!("STT recv error: {:#}", e);
+                                // Recorded but not emitted: the transcript may already
+                                // hold everything the user said, in which case the run
+                                // finishes normally and this never surfaces. It only
+                                // matters if nothing was transcribed — where blaming the
+                                // microphone for a dropped socket sends the user the
+                                // wrong way.
+                                *stt_failure.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Some(provider_error_message(STAGE_SPEECH, &e));
                                 break;
                             }
                             _ => {}
@@ -944,9 +1019,17 @@ impl PipelineHandle {
             .clone();
 
         if raw_text.is_empty() {
+            let stt_error = self
+                .stt_error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            // Re-emitted rather than merely left alone: the STT task's own emit
+            // already went out, and repeating it here means this branch cannot
+            // overwrite it whichever order the two land in.
             let _ = self
                 .app_handle
-                .emit("pipeline:error", "No speech detected. Please try again.");
+                .emit("pipeline:error", empty_transcript_message(stt_error));
             self.set_state(PipelineState::Idle);
             return Ok(());
         }
@@ -1042,16 +1125,18 @@ impl PipelineHandle {
                         // here: it would paste the spoken instruction ("fix the
                         // grammar") over the text the user asked us to edit. Leave
                         // the selection alone and say so.
-                        tracing::error!("LLM edit failed: {}, leaving the selection untouched", e);
-                        let _ = self.app_handle.emit(
-                            "pipeline:error",
-                            format!("Could not edit the selected text: {e}"),
+                        tracing::error!(
+                            "LLM edit failed: {:#}, leaving the selection untouched",
+                            e
                         );
-                    } else {
-                        tracing::error!("LLM polish failed: {}, outputting raw text", e);
                         let _ = self
                             .app_handle
-                            .emit("pipeline:error", format!("LLM polishing failed: {e}"));
+                            .emit("pipeline:error", provider_error_message(STAGE_EDIT, &e));
+                    } else {
+                        tracing::error!("LLM polish failed: {:#}, outputting raw text", e);
+                        let _ = self
+                            .app_handle
+                            .emit("pipeline:error", provider_error_message(STAGE_POLISH, &e));
                         if let Err(e) = self.output_text(&final_text, &app_ctx, false).await {
                             tracing::error!("Output failed: {}", e);
                             let _ = self
@@ -1308,9 +1393,23 @@ impl PipelineHandle {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_for_output, output_error_message, should_capture_selection,
-        should_retain_on_clipboard, with_trailing_space, ACCESSIBILITY_REQUIRED_CODE,
+        empty_transcript_message, normalize_for_output, output_error_message,
+        provider_error_message, should_capture_selection, should_retain_on_clipboard,
+        with_trailing_space, ACCESSIBILITY_REQUIRED_CODE, STAGE_EDIT, STAGE_POLISH, STAGE_SPEECH,
     };
+    use crate::retry::HttpStatusError;
+    use reqwest::StatusCode;
+
+    /// A provider rejection shaped like the real thing: the status carried in the
+    /// chain, the body echoed into the message.
+    fn provider_rejection(code: u16, body: &str) -> anyhow::Error {
+        let status = StatusCode::from_u16(code).unwrap();
+        HttpStatusError::new(status, format!("LLM API error {status}: {body}")).into()
+    }
+
+    /// Groq's real 429 body, trimmed to the 200 bytes `truncate_error_body` keeps.
+    /// The organization ID is why the raw body must never reach the capsule.
+    const GROQ_DAILY_LIMIT_BODY: &str = "{\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01jexamplexampleexample` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99261, Re";
 
     #[test]
     fn selection_is_captured_only_when_both_flags_are_on() {
@@ -1440,6 +1539,106 @@ mod tests {
             output_error_message(&err),
             "Output failed: Connection refused"
         );
+    }
+
+    #[test]
+    fn empty_transcript_blames_the_microphone_only_when_stt_worked() {
+        assert_eq!(empty_transcript_message(None), "No speech detected");
+    }
+
+    #[test]
+    fn empty_transcript_reports_the_stt_failure_instead() {
+        // The 0.7.0 bug: STT emitted "Speech: daily quota reached", then this
+        // branch overwrote it with "No speech detected", so a rate-limited
+        // provider sent the user to check their microphone.
+        assert_eq!(
+            empty_transcript_message(Some("Speech: daily quota reached".to_string())),
+            "Speech: daily quota reached"
+        );
+    }
+
+    #[test]
+    fn provider_error_separates_a_daily_quota_from_a_passing_rate_limit() {
+        // Different advice: one clears in a minute, the other not until tomorrow.
+        assert_eq!(
+            provider_error_message(STAGE_EDIT, &provider_rejection(429, GROQ_DAILY_LIMIT_BODY)),
+            "Edit: daily quota reached"
+        );
+        assert_eq!(
+            provider_error_message(
+                STAGE_POLISH,
+                &provider_rejection(429, "rate limit reached, retry in 2s")
+            ),
+            "Polish: rate limited"
+        );
+    }
+
+    #[test]
+    fn provider_error_never_echoes_the_provider_body() {
+        // What the 0.7.0 capsule showed: a JSON blob carrying the organization ID,
+        // truncated by the pill to the prefix and nothing else.
+        let message =
+            provider_error_message(STAGE_EDIT, &provider_rejection(429, GROQ_DAILY_LIMIT_BODY));
+        assert!(!message.contains("org_"), "leaked the organization ID");
+        assert!(!message.contains('{'), "leaked the raw JSON body");
+    }
+
+    #[test]
+    fn provider_error_words_the_actionable_statuses() {
+        for (code, expected) in [
+            (401, "Speech: API key rejected"),
+            (403, "Speech: API key rejected"),
+            (402, "Speech: out of credit"),
+            (404, "Speech: model not found"),
+            (413, "Speech: request too large"),
+            (500, "Speech: provider unavailable"),
+            (503, "Speech: provider unavailable"),
+            (418, "Speech: provider error"),
+        ] {
+            assert_eq!(
+                provider_error_message(STAGE_SPEECH, &provider_rejection(code, "body")),
+                expected,
+                "HTTP {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_error_stays_generic_for_an_unclassifiable_failure() {
+        assert_eq!(
+            provider_error_message(STAGE_POLISH, &anyhow::anyhow!("something went sideways")),
+            "Polish: provider error",
+            "an error we cannot classify must not be given a specific meaning"
+        );
+    }
+
+    #[test]
+    fn provider_error_messages_fit_the_error_pill() {
+        // The pill is one truncated line ~29 characters wide. A message longer than
+        // that is a message the user cannot read — which is the whole defect being
+        // fixed here, so guard the budget rather than trusting review to catch it.
+        const BUDGET: usize = 29;
+        let cases = [
+            provider_rejection(429, GROQ_DAILY_LIMIT_BODY),
+            provider_rejection(429, "slow down"),
+            provider_rejection(401, "bad key"),
+            provider_rejection(402, "no credit"),
+            provider_rejection(404, "no model"),
+            provider_rejection(413, "too big"),
+            provider_rejection(503, "busy"),
+            anyhow::anyhow!("unclassifiable"),
+        ];
+        for stage in [STAGE_SPEECH, STAGE_POLISH, STAGE_EDIT] {
+            for err in &cases {
+                let message = provider_error_message(stage, err);
+                assert!(
+                    message.chars().count() <= BUDGET,
+                    "{message:?} is {} chars, over the {BUDGET}-char pill",
+                    message.chars().count()
+                );
+            }
+        }
+        assert!(empty_transcript_message(None).chars().count() <= BUDGET);
     }
 
     #[test]

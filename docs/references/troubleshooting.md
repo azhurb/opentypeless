@@ -83,6 +83,28 @@ Check these in order:
 
 Nothing is lost when an edit fails: the selection is left untouched and the error is surfaced. The raw transcript is never pasted over selected text.
 
+## "The capsule showed an error I couldn't read"
+
+Provider failures are reported as `<stage>: <reason>` — the stage says which step failed, which matters when STT and the LLM are different providers with separate quotas (the recommended Groq + Google pairing, for instance). `Speech` is transcription, `Polish` is the AI rewrite of a dictation, `Edit` is a selected-text rewrite.
+
+| Message | What happened | What to do |
+|---|---|---|
+| `…: daily quota reached` | The provider's per-**day** budget is spent | Wait for the reset, or switch provider in Settings |
+| `…: rate limited` | A per-minute limit; already retried three times | Wait a moment and dictate again |
+| `…: API key rejected` | The provider refused the key (401 / 403) | Re-enter it in Settings |
+| `…: out of credit` | The account has no balance | Top up, or switch provider |
+| `…: model not found` | The configured model name isn't available to this key | Fix the model in Settings |
+| `…: request too large` | The recording or the selected text exceeded the provider's limit | Dictate in shorter passes; select less text |
+| `…: provider unavailable` | Provider-side 5xx | Try again shortly |
+| `…: cannot reach provider` / `provider timed out` | Network or DNS, or the provider never answered | Check connectivity |
+| `No speech detected` | Transcription succeeded and returned nothing | Check the input device and that the hotkey was held while speaking |
+
+`No speech detected` means what it says: the microphone is the thing to check *only* for that message. Before 0.7.1 it was also shown when the STT provider itself failed, which sent people looking at their microphone over what was actually an exhausted quota.
+
+The capsule's error pill fits one short line and clears after 2.5 s, so it carries the reason and nothing more. The provider's full response — status, body, model — is logged at error level. `Needs confirmation:` a packaged build currently logs to stdout only, so on a Finder launch there is nothing to read afterwards; launching the binary from a terminal (`/Applications/OpenTypeless.app/Contents/MacOS/opentypeless`) is the only way to capture it today.
+
+An `Edit` failure never costs you anything: the selection is left exactly as it was. A `Polish` failure still pastes the raw transcript.
+
 ## Non-macOS
 
 The Permissions step is skipped on Linux and Windows — neither needs per-app Microphone or Accessibility grants. If recording fails, check that the default input device is selected in the OS sound settings.
