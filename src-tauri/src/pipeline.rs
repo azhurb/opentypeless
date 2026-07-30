@@ -1,5 +1,4 @@
 use anyhow::Result;
-use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
@@ -31,6 +30,17 @@ fn with_trailing_space(text: &str) -> String {
     out
 }
 
+/// Normalize text for output. Inserted dictations get the separating trailing
+/// space from [`with_trailing_space`]; text that replaces a selection is trimmed
+/// only, because it has to occupy the selected range exactly.
+fn normalize_for_output(text: &str, replaced_selection: bool) -> String {
+    if replaced_selection {
+        text.trim_end().to_string()
+    } else {
+        with_trailing_space(text)
+    }
+}
+
 /// Keep the dictation text on the clipboard and show the manual-paste tip when
 /// the paste did not land (no app consumed it) — but never in a terminal, which
 /// is a reliable paste target whose daily CLI flow shouldn't be interrupted.
@@ -41,9 +51,9 @@ fn should_retain_on_clipboard(landed: bool, is_terminal: bool) -> bool {
 }
 
 /// On macOS, verify whether the process has been granted Accessibility (Assistive Access)
-/// permission. The paste path posts CGEvents directly and the selected-text capture goes
-/// through enigo's CGEventPost; both require this permission, and without it the OS silently
-/// drops every synthesised key event.
+/// permission. Both the paste path and the selected-text capture post CGEvents directly
+/// (see [`crate::output::copy_selection`]); both require this permission, and without it the
+/// OS silently drops every synthesised key event.
 /// Returns true on all non-macOS platforms (no permission needed).
 pub fn is_accessibility_trusted() -> bool {
     #[cfg(target_os = "macos")]
@@ -298,17 +308,9 @@ impl PipelineHandle {
         let mut clipboard = arboard::Clipboard::new().ok()?;
         let backup = clipboard.get_text().ok();
 
-        if let Ok(mut enigo) = Enigo::new(&EnigoSettings::default()) {
-            #[cfg(target_os = "macos")]
-            let modifier = Key::Meta;
-            #[cfg(not(target_os = "macos"))]
-            let modifier = Key::Control;
-
-            let pressed = enigo.key(modifier, Direction::Press).is_ok();
-            if pressed {
-                let _ = enigo.key(Key::Unicode('c'), Direction::Click);
-                let _ = enigo.key(modifier, Direction::Release);
-            }
+        if let Err(e) = output::copy_selection(&self.app_handle) {
+            tracing::warn!("Selected-text copy keystroke failed: {:#}", e);
+            return None;
         }
 
         std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_COPY_SETTLE_MS));
@@ -731,7 +733,11 @@ impl PipelineHandle {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
             .unwrap_or_default();
-        let selected_text = if config_data.selected_text_enabled {
+        // Gated on polish as well as the setting: the captured selection is only
+        // ever read by the LLM request, so with polish off the Cmd+C would cost
+        // latency and churn the user's clipboard to produce something nothing
+        // consumes. The Settings toggle is disabled in the same case.
+        let selected_text = if config_data.selected_text_enabled && config_data.polish_enabled {
             tokio::time::sleep(std::time::Duration::from_millis(
                 SELECTED_TEXT_CAPTURE_DELAY_MS,
             ))
@@ -871,6 +877,9 @@ impl PipelineHandle {
 
         let final_text;
         let llm_elapsed;
+        // Whether the output overwrote a user selection — needed again below for
+        // the correction watcher, which must be told exactly what was typed.
+        let replaced_selection;
 
         // Polish with LLM (resources already pre-built)
         // Check abort before entering LLM polish and output
@@ -908,6 +917,12 @@ impl PipelineHandle {
                 chunk_count_inner.fetch_add(1, Ordering::SeqCst);
             });
 
+            // Editing a selection rather than inserting text. Changes two things
+            // downstream: the output must not gain a trailing space (it replaces
+            // the selection exactly), and a failed polish must not fall back to
+            // pasting the raw transcript over the user's selected text.
+            replaced_selection = selected_text.is_some();
+
             let req = PolishRequest {
                 raw_text: raw_text.clone(),
                 app_type: app_ctx.app_type,
@@ -930,7 +945,10 @@ impl PipelineHandle {
                         return Ok(());
                     }
                     final_text = response.polished_text;
-                    if let Err(e) = self.output_text(&final_text, &app_ctx).await {
+                    if let Err(e) = self
+                        .output_text(&final_text, &app_ctx, replaced_selection)
+                        .await
+                    {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
                             .app_handle
@@ -942,16 +960,28 @@ impl PipelineHandle {
                         tracing::info!("Pipeline aborted after LLM error, skipping output");
                         return Ok(());
                     }
-                    tracing::error!("LLM polish failed: {}, outputting raw text", e);
                     final_text = raw_text.clone();
-                    let _ = self
-                        .app_handle
-                        .emit("pipeline:error", format!("LLM polishing failed: {e}"));
-                    if let Err(e) = self.output_text(&final_text, &app_ctx).await {
-                        tracing::error!("Output failed: {}", e);
+                    if replaced_selection {
+                        // Raw-text fallback is right for a dictation but destructive
+                        // here: it would paste the spoken instruction ("fix the
+                        // grammar") over the text the user asked us to edit. Leave
+                        // the selection alone and say so.
+                        tracing::error!("LLM edit failed: {}, leaving the selection untouched", e);
+                        let _ = self.app_handle.emit(
+                            "pipeline:error",
+                            format!("Could not edit the selected text: {e}"),
+                        );
+                    } else {
+                        tracing::error!("LLM polish failed: {}, outputting raw text", e);
                         let _ = self
                             .app_handle
-                            .emit("pipeline:error", output_error_message(&e));
+                            .emit("pipeline:error", format!("LLM polishing failed: {e}"));
+                        if let Err(e) = self.output_text(&final_text, &app_ctx, false).await {
+                            tracing::error!("Output failed: {}", e);
+                            let _ = self
+                                .app_handle
+                                .emit("pipeline:error", output_error_message(&e));
+                        }
                     }
                 }
             }
@@ -970,7 +1000,10 @@ impl PipelineHandle {
         } else {
             llm_elapsed = std::time::Duration::ZERO;
             final_text = raw_text.clone();
-            if let Err(e) = self.output_text(&final_text, &app_ctx).await {
+            // No polish means no selected-text capture either (see the gate in
+            // `stop`), so this is always a plain insertion.
+            replaced_selection = false;
+            if let Err(e) = self.output_text(&final_text, &app_ctx, false).await {
                 tracing::error!("Output failed: {}", e);
                 let _ = self
                     .app_handle
@@ -1046,9 +1079,12 @@ impl PipelineHandle {
             tracing::warn!("history retention prune failed: {}", e);
         }
 
-        // Learn-from-corrections: watch for the user fixing one word in our typed output.
-        if config.learn_from_corrections_enabled {
-            let typed = with_trailing_space(&final_text);
+        // Learn-from-corrections: watch for the user fixing one word in our typed
+        // output. Skipped when we replaced a selection — the watcher's premise is
+        // that the field gained a fresh dictation it can anchor on, and an edit of
+        // pre-existing text gives it no such anchor.
+        if config.learn_from_corrections_enabled && !replaced_selection {
+            let typed = normalize_for_output(&final_text, replaced_selection);
             if !typed.trim().is_empty() {
                 if let Some(field) = crate::correction::current_platform_field() {
                     let dictionary = self
@@ -1086,7 +1122,14 @@ impl PipelineHandle {
         Ok(())
     }
 
-    async fn output_text(&self, text: &str, app_ctx: &app_detector::AppContext) -> Result<()> {
+    /// `replaced_selection` is true when this output overwrites text the user had
+    /// selected, which suppresses the inter-dictation trailing space.
+    async fn output_text(
+        &self,
+        text: &str,
+        app_ctx: &app_detector::AppContext,
+        replaced_selection: bool,
+    ) -> Result<()> {
         self.set_state(PipelineState::Outputting);
 
         // Paste relies on CGEventPost; without Accessibility the OS silently
@@ -1101,7 +1144,11 @@ impl PipelineHandle {
         // Trailing single space so successive dictations don't glue together
         // ("hello world" + "goodbye" → "hello world. goodbye." instead of
         // "hello world.goodbye."). History stores the un-normalized text.
-        let typed = with_trailing_space(text);
+        //
+        // Editing a selection is the exception: the paste replaces the selected
+        // range exactly, so an appended space would nudge the following word out
+        // of place on every edit.
+        let typed = normalize_for_output(text, replaced_selection);
 
         // Paste, then decide based on whether the receiving app actually
         // consumed it. For a single, non-terminal paste the output path uses
@@ -1179,9 +1226,48 @@ impl PipelineHandle {
 #[cfg(test)]
 mod tests {
     use super::{
-        output_error_message, should_retain_on_clipboard, with_trailing_space,
-        ACCESSIBILITY_REQUIRED_CODE,
+        normalize_for_output, output_error_message, should_retain_on_clipboard,
+        with_trailing_space, ACCESSIBILITY_REQUIRED_CODE,
     };
+
+    #[test]
+    fn selection_replacement_gets_no_trailing_space() {
+        // The paste occupies the selected range exactly; a trailing space would
+        // push the next word along on every edit.
+        assert_eq!(
+            normalize_for_output("More formal wording.", true),
+            "More formal wording."
+        );
+    }
+
+    #[test]
+    fn selection_replacement_still_trims_trailing_whitespace() {
+        assert_eq!(
+            normalize_for_output("Edited text.  \n", true),
+            "Edited text."
+        );
+    }
+
+    #[test]
+    fn insertion_keeps_the_separating_trailing_space() {
+        assert_eq!(normalize_for_output("Hello world.", false), "Hello world. ");
+    }
+
+    #[test]
+    fn normalize_for_output_matches_with_trailing_space_for_insertions() {
+        for input in ["Hi.", "  padded  ", "", "こんにちは。"] {
+            assert_eq!(
+                normalize_for_output(input, false),
+                with_trailing_space(input),
+                "insertion path must stay identical for {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn selection_replacement_of_blank_text_is_empty() {
+        assert_eq!(normalize_for_output("   \n", true), "");
+    }
 
     #[test]
     fn retain_when_paste_did_not_land_and_not_terminal() {

@@ -26,7 +26,7 @@ Background: audio capture used to be the *last* step of setup. With streaming ST
 ## Stop Flow
 
 1. State moves `Recording → Transcribing`.
-2. If selected-text mode is enabled, the pipeline waits `SELECTED_TEXT_CAPTURE_DELAY_MS` so hotkey modifiers can be released, then simulates Cmd/Ctrl+C and restores clipboard contents.
+2. If selected-text mode is enabled **and polish is enabled** — `should_capture_selection` decides, and the second half matters because only the LLM request ever reads the captured selection, so with polish off the capture would churn the clipboard to produce something nothing consumes — the pipeline waits `SELECTED_TEXT_CAPTURE_DELAY_MS` so hotkey modifiers can be released, then synthesizes Cmd/Ctrl+C and restores clipboard contents. On macOS the keystroke is a pair of prebuilt `CGEvent`s carrying a fixed, layout-independent key code, posted from the Tauri main thread via `output::copy_selection`; resolving a *character* to a key code instead would enter HIToolbox Text Services, which asserts it is on the main queue and aborts the process from a Tokio worker. See [Output Path](#output-path) for the paste side of the same constraint.
 3. Audio capture stops; pipeline waits for STT finalization. Closing the audio channel is what drives `disconnect()`, and for streaming providers that call now briefly drains whatever the provider flushes in response to its finish signal — see [Providers → Draining the close of a streaming session](providers.md#draining-the-close-of-a-streaming-session). Text recovered there arrives through the same `DisconnectResult` branch that file-based providers use.
 4. If polish is enabled, final text is sent to the LLM provider. A transient failure of the request itself is retried (see [Transient Failure Retry](#transient-failure-retry)).
 5. Output runs (clipboard paste — see [Output Path](#output-path)).
@@ -98,11 +98,13 @@ Detecting "landed" from outside the receiving app is **fundamentally limited on 
 
 ## Important Invariants
 
-- `output_text()` trims trailing whitespace and appends a single space before pasting into the foreground app, so successive dictations don't glue together. History stores the un-normalized text.
+- `output_text()` normalizes through `normalize_for_output(text, replaced_selection)`. An **inserted** dictation is trimmed and gets a single trailing space, so successive dictations don't glue together. Text that **replaces a selection** is trimmed only: the paste has to occupy the selected range exactly, and an appended space would nudge the following word out of place on every edit. History stores the un-normalized text.
 - LLM polish output is batched: the capsule renders streamed `llm:chunk` events for a live indicator, but the paste only fires once polish completes.
 - `pipeline_lock` serializes `start()` and `stop()`.
 - `abort()` sets the abort flag, drops the audio handle, notifies `stt_done`, clears accumulated text, and forces `Idle`.
 - On macOS, if Cmd+C does not change the clipboard, selected text is ignored — this avoids passing stale clipboard content to the LLM.
+- **A failed LLM call must not paste over a selection.** The plain-dictation path falls back to pasting the raw transcript when polish fails, which is the right trade there. The selection-replacing path has no such fallback: pasting the raw transcript would overwrite the selected text with the literal words of the instruction ("fix the grammar") and destroy what the user was editing. It leaves the selection untouched and surfaces the error instead.
+- The correction watcher is skipped when a selection was replaced. It anchors on the span of text it believes was just typed, and an edit that rewrites a whole paragraph gives it no such span.
 - macOS Accessibility permission is checked through raw FFI (`AXIsProcessTrusted`). It is required for output (keystroke synthesis of Cmd+V) and for the correction watcher (focused-field reads). A single grant covers both.
 - Tray tooltip and capsule UI both subscribe to `pipeline:state`; consider both when changing state semantics.
 - Retry stops at the last point where output is still invisible: the STT handshake, the file upload, the LLM request head. Anything past that — audio already sent, chunks already emitted — must not retry.

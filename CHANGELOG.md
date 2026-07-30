@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
+## [Unreleased]
+
+### Fixed
+- **"Selected Text Context" crashed the app, and would not have worked if it hadn't.** Turning the setting on and dictating killed the process outright: capturing your selection synthesised Cmd+C from a background thread, and the macOS key-synthesis path it used resolves a character to a key by calling into Text Services, which asserts that it is only ever called on the main thread and aborts the process when it isn't. The keystroke is now built ahead of time as a pair of Cmd+C events with a fixed, layout-independent key code and posted from the main thread, the same way the paste path has always worked. That also closes a second, quieter bug on the same line: the old path posted the Cmd modifier as its own separate event, so an app could receive the `c` without it and type a literal "c" over the text you had selected.
+- **The instruction you spoke was fighting the rules the model was given.** The selected-text instructions were appended to the ordinary dictation prompt, which forbids rephrasing and states that the output must not be longer than the input. In this mode the input *is* the instruction, so "make this a bullet list" capped the rewrite at four words and "fix the grammar" forbade the very thing it asked for. Selected-text mode now gets its own prompt built for editing rather than transcribing, with worked examples and an explicit rule for the case where what you said wasn't an instruction at all — if you dictate ordinary prose with something incidentally selected, it polishes your dictation instead of mangling the selection. The per-app tone nudges are deliberately skipped here: "this is an email, be formal" would formalise a passage you only asked to spell-check.
+- **A failed edit used to overwrite your selection with the words you spoke.** If the LLM call failed mid-edit, the fallback pasted the raw transcript — so a selected paragraph was replaced by the literal text "fix the grammar" and the paragraph was gone. A failed edit now leaves the selection exactly as it was and reports the error. The plain-dictation fallback is unchanged; it is only the selection-replacing path that no longer has one, because there is nothing safe to fall back to.
+- Text that replaces a selection no longer gains the trailing space that separates consecutive dictations. The paste has to occupy the selected range exactly, so an appended space nudged the following word out of place on every edit.
+- Selected text is no longer captured when AI Polish is off. Nothing reads it in that case, so the Cmd+C only cost latency and churned your clipboard to produce something that was immediately discarded.
+
+**These want one real dictation to confirm** — the crash was a main-thread assertion inside a system framework, which no test can stand in for.
+
 ## [0.6.0] - 2026-07-26
 
 ### Added
