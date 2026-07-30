@@ -57,18 +57,29 @@ Repo evidence:
 - Prompt construction lives in `src-tauri/src/llm/prompt.rs`.
 - The LLM Settings pane exposes provider, model, base URL, AI polish, translation, and selected-text context controls.
 
-Current prompt behavior includes:
+There are **two prompts**, selected by whether a selection was captured, not one prompt with an addon. Dictation polishing and instruction-driven editing want opposite things — the first forbids rephrasing and caps the output at the length of the input, the second exists to rephrase and has no meaningful length relationship to what was spoken — so appending the second set of rules to the first produced a prompt the model could not satisfy.
+
+Dictation prompt behavior includes:
 
 - punctuation cleanup, with the polished text required to end with terminal punctuation (`. ? !` or the language equivalent)
 - minimal-edit polishing: small grammar fixes only, no rephrasing, restructuring, or word reordering — the user should still recognize their dictated sentences
 - filler-word removal
 - list and paragraph formatting
 - dictionary term preservation
-- selected-text instruction mode
 - translation to configured target language
-- prompt-injection resistance for transcript and selected text
+- per-app-type tone addons (email, chat, document)
+- prompt-injection resistance for the transcript
 
-A single trailing space is appended to whatever is pasted into the foreground app (see [Pipeline](../architecture/pipeline.md)), so successive dictations don't glue together.
+Selected-text prompt behavior includes:
+
+- the spoken instruction sets the scope: the replacement may be far shorter or far longer than either input
+- nothing outside the selection is touched, and the surrounding form (Markdown, list structure, code fences) is preserved
+- a plain-dictation fallback: when the transcript isn't plausibly an instruction, it lightly polishes the dictation rather than forcing it onto the selection
+- dictionary terms, language hints, and translation still apply
+- the per-app-type tone addons are deliberately **skipped** — the register of an edit is set by the selected text and the instruction, and an "this is an email, be formal" nudge would formalize a passage the user only asked to spell-check
+- prompt-injection resistance for both the selection and the transcript
+
+A single trailing space is appended to an **inserted** dictation (see [Pipeline](../architecture/pipeline.md)), so successive dictations don't glue together. Text that replaces a selection gets no trailing space: it has to occupy the selected range exactly.
 
 Output is always delivered via the system clipboard plus a synthesized Cmd+V (Ctrl+V on Windows/Linux). The user's prior clipboard contents are snapshotted and restored after the paste lands. For terminal-hosted CLIs that don't handle bulk pastes well (Claude CLI, Codex CLI, Gemini CLI) the paste is split into smaller chunks with brief inter-chunk delays — see [Pipeline → Output](../architecture/pipeline.md) for the chunking constants and the list of recognised terminal targets.
 

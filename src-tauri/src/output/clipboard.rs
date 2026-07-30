@@ -315,6 +315,66 @@ fn invoke_paste(app_handle: &AppHandle) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("Main-thread paste closure dropped before sending"))?
 }
 
+/// Synthesize a Cmd+C (Ctrl+C off macOS) into the foreground app so its
+/// selection lands on the clipboard.
+///
+/// Blocks until the keystroke has been posted. Callers are responsible for
+/// backing up and restoring the clipboard around this, and for waiting long
+/// enough afterwards for the receiving app to service the copy.
+///
+/// Must NOT be called from the main thread on macOS: it dispatches onto the main
+/// thread and waits, which would deadlock.
+#[cfg(not(target_os = "macos"))]
+pub fn invoke_copy(_app_handle: &AppHandle) -> Result<()> {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    let mut enigo = Enigo::new(&Settings::default())
+        .map_err(|e| anyhow::anyhow!("Failed to create Enigo: {:?}", e))?;
+    enigo
+        .key(Key::Control, Direction::Press)
+        .map_err(|e| anyhow::anyhow!("Ctrl press error: {:?}", e))?;
+    enigo
+        .key(Key::Unicode('c'), Direction::Click)
+        .map_err(|e| anyhow::anyhow!("C click error: {:?}", e))?;
+    enigo
+        .key(Key::Control, Direction::Release)
+        .map_err(|e| anyhow::anyhow!("Ctrl release error: {:?}", e))?;
+    Ok(())
+}
+
+/// See the non-macOS twin above for the contract.
+///
+/// The main-thread dispatch is not optional here. enigo's macOS backend resolves
+/// `Key::Unicode` to a keycode through HIToolbox Text Services
+/// (`TSMGetInputSourceProperty`), which calls `dispatch_assert_queue(main)` and
+/// aborts the process with SIGTRAP when it is not on the main queue — which is
+/// exactly what happened when selected-text capture ran on a Tokio worker.
+/// Posting prebuilt CGEvents from the main thread avoids the layout lookup
+/// entirely and matches the paste path.
+#[cfg(target_os = "macos")]
+pub fn invoke_copy(app_handle: &AppHandle) -> Result<()> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<()>>(1);
+    app_handle
+        .run_on_main_thread(move || {
+            let _ = tx.send(post_copy_keystroke());
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to dispatch copy to main thread: {e}"))?;
+    rx.recv()
+        .map_err(|_| anyhow::anyhow!("Main-thread copy closure dropped before sending"))?
+}
+
+/// macOS copy keystroke synthesis. Mirrors [`post_paste_keystroke`], including
+/// the 5 ms down/up gap that slow key-down handlers need.
+#[cfg(target_os = "macos")]
+fn post_copy_keystroke() -> Result<()> {
+    use core_graphics::event::CGEventTapLocation;
+
+    let (down, up) = build_copy_events()?;
+    down.post(CGEventTapLocation::HID);
+    std::thread::sleep(Duration::from_millis(5));
+    up.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
 /// macOS paste keystroke synthesis.
 ///
 /// Builds two CGEvents (V key-down, V key-up) directly via core-graphics,
@@ -353,21 +413,43 @@ fn post_paste_keystroke() -> Result<()> {
 /// the resulting events' keycode and flags without posting them.
 #[cfg(target_os = "macos")]
 fn build_paste_events() -> Result<(core_graphics::event::CGEvent, core_graphics::event::CGEvent)> {
-    use core_graphics::event::{CGEvent, CGEventFlags};
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-
     // kVK_ANSI_V — the layout-independent keycode for the "V" key.
     const KVK_ANSI_V: core_graphics::event::CGKeyCode = 0x09;
+    build_cmd_key_events(KVK_ANSI_V, "V")
+}
+
+/// Build the C key-down and C key-up CGEvents for a Cmd+C copy.
+#[cfg(target_os = "macos")]
+fn build_copy_events() -> Result<(core_graphics::event::CGEvent, core_graphics::event::CGEvent)> {
+    // kVK_ANSI_C — the layout-independent keycode for the "C" key.
+    const KVK_ANSI_C: core_graphics::event::CGKeyCode = 0x08;
+    build_cmd_key_events(KVK_ANSI_C, "C")
+}
+
+/// Build a Cmd+<key> down/up CGEvent pair with the Cmd flag stamped directly on
+/// both events. `key_name` only appears in error messages.
+///
+/// Layout-independent keycodes are used deliberately: resolving a character to a
+/// keycode goes through HIToolbox Text Services, which asserts it is called on
+/// the main queue and aborts the process otherwise. Hardcoding the ANSI keycode
+/// keeps event construction callable from any thread.
+#[cfg(target_os = "macos")]
+fn build_cmd_key_events(
+    keycode: core_graphics::event::CGKeyCode,
+    key_name: &str,
+) -> Result<(core_graphics::event::CGEvent, core_graphics::event::CGEvent)> {
+    use core_graphics::event::{CGEvent, CGEventFlags};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource"))?;
 
-    let down = CGEvent::new_keyboard_event(source.clone(), KVK_ANSI_V, true)
-        .map_err(|_| anyhow::anyhow!("Failed to create V key-down event"))?;
+    let down = CGEvent::new_keyboard_event(source.clone(), keycode, true)
+        .map_err(|_| anyhow::anyhow!("Failed to create {key_name} key-down event"))?;
     down.set_flags(CGEventFlags::CGEventFlagCommand);
 
-    let up = CGEvent::new_keyboard_event(source, KVK_ANSI_V, false)
-        .map_err(|_| anyhow::anyhow!("Failed to create V key-up event"))?;
+    let up = CGEvent::new_keyboard_event(source, keycode, false)
+        .map_err(|_| anyhow::anyhow!("Failed to create {key_name} key-up event"))?;
     up.set_flags(CGEventFlags::CGEventFlagCommand);
 
     Ok((down, up))
@@ -431,6 +513,69 @@ mod tests {
             !up.get_flags().intersects(other_modifiers),
             "key-up has stray modifier: flags={:?}",
             up.get_flags()
+        );
+    }
+
+    /// kVK_ANSI_C — the layout-independent keycode for the C key on macOS.
+    const KVK_ANSI_C: i64 = 0x08;
+
+    #[test]
+    fn copy_events_use_c_keycode() {
+        let (down, up) = build_copy_events().expect("CGEvents construct");
+        assert_eq!(
+            down.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
+            KVK_ANSI_C,
+            "key-down event must carry kVK_ANSI_C"
+        );
+        assert_eq!(
+            up.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
+            KVK_ANSI_C,
+            "key-up event must carry kVK_ANSI_C"
+        );
+    }
+
+    #[test]
+    fn copy_events_set_command_flag_on_both_down_and_up() {
+        // Same race as paste: an unflagged event types a literal "c" over
+        // the user's selection instead of copying it.
+        let (down, up) = build_copy_events().expect("CGEvents construct");
+        assert!(
+            down.get_flags().contains(CGEventFlags::CGEventFlagCommand),
+            "key-down must have Cmd flag set"
+        );
+        assert!(
+            up.get_flags().contains(CGEventFlags::CGEventFlagCommand),
+            "key-up must have Cmd flag set"
+        );
+    }
+
+    #[test]
+    fn copy_events_do_not_leak_other_modifiers() {
+        let (down, up) = build_copy_events().expect("CGEvents construct");
+        let other_modifiers = CGEventFlags::CGEventFlagShift
+            | CGEventFlags::CGEventFlagControl
+            | CGEventFlags::CGEventFlagAlternate
+            | CGEventFlags::CGEventFlagSecondaryFn;
+        assert!(
+            !down.get_flags().intersects(other_modifiers),
+            "key-down has stray modifier: flags={:?}",
+            down.get_flags()
+        );
+        assert!(
+            !up.get_flags().intersects(other_modifiers),
+            "key-up has stray modifier: flags={:?}",
+            up.get_flags()
+        );
+    }
+
+    #[test]
+    fn copy_and_paste_use_distinct_keycodes() {
+        // Guards the shared builder against being wired to one keycode.
+        let (copy_down, _) = build_copy_events().expect("CGEvents construct");
+        let (paste_down, _) = build_paste_events().expect("CGEvents construct");
+        assert_ne!(
+            copy_down.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
+            paste_down.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
         );
     }
 }
