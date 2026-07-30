@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
+## [Unreleased]
+
+### Fixed
+- **A failing speech provider reported itself as a silent microphone.** When the STT call failed — a rate limit, a rejected key, a socket that dropped mid-recording — the pipeline emitted that error and then, on its way past the empty transcript, overwrote it with "No speech detected. Please try again." The frontend keeps only the last error it is told about, so every kind of transcription failure arrived looking like a hardware problem, which is the one thing it was not: the advice it gave you was to go and check a microphone that was working fine. The specific failure is now recorded as it happens and reported from that branch instead, and "No speech detected" is left for the case it describes — transcription succeeded and returned nothing. A stream that dies mid-recording, previously logged and otherwise swallowed, now reaches the same place.
+- **Provider errors were shown to you as raw JSON.** The capsule echoed the provider's response body, and those bodies are JSON that says nothing useful first: Groq's rate-limit reply spends its opening 140 bytes on the model name, your organization ID and the service tier before mentioning a limit. The error pill is one truncated line about 29 characters wide, so what actually appeared on screen was "Could not edit the selected te…" — the prefix, and none of the reason. Provider failures are now worded as `<stage>: <reason>`, where the stage is Speech, Polish or Edit (which step failed matters when transcription and polish are different providers with separate quotas) and the reason comes from the same classifier the retry policy uses: `daily quota reached`, `rate limited`, `API key rejected`, `out of credit`, `model not found`, `request too large`, `provider unavailable`, `provider timed out`, `cannot reach provider`. A per-day budget is distinguished from a per-minute one because the advice differs — one clears while you wait, the other does not clear until tomorrow. The provider's full response still goes to the log; it no longer goes to the capsule, and your organization ID no longer appears on screen. Every message is unit-tested against the pill's width, since a message you cannot finish reading is the defect this replaces. See [`docs/references/troubleshooting.md`](docs/references/troubleshooting.md).
+
+- An exhausted **daily** quota is no longer retried three times before being reported. Retry exists for failures that clear on a second attempt; a budget that resets tomorrow will still be spent 1.2 s from now, so the attempts only added a wait to the front of the same error. A per-minute limit — the kind the backoff was built for — is unchanged.
+
+**Wants one real check:** trigger a provider failure with a live build — an exhausted daily quota or a deliberately wrong key — and confirm the capsule shows the short reason rather than a truncated blob.
+
 ## [0.7.0] - 2026-07-30
 
 ### Added
