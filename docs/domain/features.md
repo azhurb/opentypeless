@@ -95,7 +95,7 @@ Off by default (`selected_text_enabled`). With it on, selecting text in any app 
 
 User-facing behavior:
 
-- **Mode indicator.** When the app knows a selection was captured, the capsule pill takes an amber ring for the whole run. No size or layout change. On macOS with Accessibility able to read the field the ring appears at record start, while the user is still speaking; where only the clipboard fallback works it appears once they release the hotkey.
+- **Mode indicator.** When the app knows *before the user speaks* that a selection was captured, the capsule pill takes an amber ring for the whole run. No size or layout change. That knowledge only exists on the Accessibility path, so the ring is deliberately **not** shown when the selection came from the clipboard fallback: by then the recording is over and an early warning arrives too late to warn anybody. Shown anyway, it lasted under a second before the edited tip took over the pill, which reads as a rendering glitch. Fallback targets rely on the confirmation tip instead, which carries the same amber.
 - **Confirmation.** After a successful replacement the capsule shows "Edited — press ⌘Z to undo" for 3 s. Replacing a selection is the one output path that destroys something the user already had, so it gets an explicit receipt with the undo shortcut.
 - **Failure is non-destructive.** If the LLM call fails, the selection is left untouched and the error is surfaced. The raw transcript is never pasted over selected text.
 - **Requires AI Polish**, since the LLM is what applies the instruction. The Settings toggle is disabled with a hint when polish is off, and the pipeline enforces the same rule independently.
@@ -106,8 +106,8 @@ Platform matrix:
 | | Selection capture | Ring appears |
 |---|---|---|
 | macOS, Accessibility can read the field | Accessibility preflight, no keystroke | At record start |
-| macOS, Accessibility blind (browser web content, Electron) | Cmd+C fallback | At hotkey release |
-| Windows / Linux | Ctrl+C fallback | At hotkey release |
+| macOS, Accessibility blind (browser web content, Electron) | Cmd+C fallback | No ring — confirmation tip only |
+| Windows / Linux | Ctrl+C fallback | No ring — confirmation tip only |
 
 Mechanism: [Pipeline → Selected-Text Capture](../architecture/pipeline.md#selected-text-capture).
 

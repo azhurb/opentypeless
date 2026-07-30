@@ -814,12 +814,17 @@ impl PipelineHandle {
                 "Selected-text clipboard fallback: len={}",
                 selected_text.as_deref().map(|s| s.len()).unwrap_or(0)
             );
-            // The late signal for targets Accessibility can't read. The capsule gets
-            // its editing indicator now instead of at record start — the best that's
-            // possible when the selection only becomes visible via the clipboard.
-            if selected_text.is_some() {
-                let _ = self.app_handle.emit("pipeline:editing_selection", true);
-            }
+            // Deliberately no `pipeline:editing_selection` here. The capsule's mode ring
+            // is an *early warning* — "what you are about to say will overwrite the text
+            // you selected" — and by this point the recording is already over, so the
+            // information has expired. Emitting it anyway made the ring appear for under
+            // a second between this capture and the edited tip taking over the pill,
+            // which reads as a rendering glitch rather than a mode. Measured at 882 ms on
+            // one run; the whole `stop()` averages ~1 s.
+            //
+            // So the ring now means exactly one thing: the Accessibility preflight saw
+            // your selection before you spoke. Targets AX can't read get no ring and rely
+            // on the "Edited — ⌘Z to undo" tip afterwards, which carries the same amber.
             *self
                 .preloaded_selected_text
                 .lock()
