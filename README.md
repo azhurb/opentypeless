@@ -59,9 +59,9 @@
 - 💊 Floating capsule widget that stays on top
 - 🗣️ 6+ STT providers: Deepgram, AssemblyAI, Whisper, Groq, GLM-ASR, SiliconFlow
 - 🤖 Text polishing via multiple LLMs: OpenAI, DeepSeek, Claude, Gemini, Ollama, and more
-- ⚡ Streaming output — text appears as the LLM generates it
-- ⌨️ Keyboard simulation or clipboard output
-- 📝 Highlight text before recording to give the LLM context
+- ⚡ Live progress — the capsule shows the polish forming as the LLM works, then pastes once it's done
+- ⌨️ Lands in whatever app is focused, via the clipboard plus a synthesized ⌘V / Ctrl+V — split into chunks for terminal CLIs that choke on bulk pastes
+- ✏️ Edit selected text by voice — select a paragraph, say "fix the grammar" or "make this shorter", and the selection is rewritten in place (requires AI Polish)
 - 🌐 Translation mode: speak in one language, output in another (20+ languages)
 - 📖 Custom dictionary for domain-specific terms
 - 🔍 Per-app detection to adapt formatting
