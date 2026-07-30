@@ -324,6 +324,24 @@ pub fn focused_editable_present() -> bool {
     false
 }
 
+/// The text currently selected in the focused element, when Accessibility can see
+/// it. Used by the pipeline to learn *at record start* that this dictation will
+/// edit a selection, which is what drives the capsule's mode indicator and lets
+/// the Cmd+C capture be skipped entirely.
+///
+/// `None` means "nothing usable here", not "nothing is selected": browser web
+/// content and Electron apps are invisible to Accessibility, and off macOS there
+/// is no implementation at all. Callers must keep the clipboard fallback.
+#[cfg(target_os = "macos")]
+pub fn focused_selected_text() -> Option<String> {
+    ax_macos::focused_selected_text()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn focused_selected_text() -> Option<String> {
+    ax_stub::focused_selected_text()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

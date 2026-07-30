@@ -30,7 +30,7 @@ Rust orchestration flow from recording through transcription, polishing, output,
 
 ## Selected-Text Mode
 
-Mode where selected foreground-app text is captured with Cmd/Ctrl+C and passed to the LLM. Voice input becomes an instruction about that selected text.
+Mode where a dictation edits the user's selection instead of inserting text: the transcript becomes an instruction, the selection becomes the material, and the polished result replaces the selection. Captured Accessibility-first on macOS (`AXSelectedText`, read at record start), falling back to a Cmd/Ctrl+C copy where Accessibility is blind — browser web content, Electron, and every non-macOS platform. Requires AI Polish, since the LLM is what applies the instruction. Detail: [Pipeline → Selected-Text Capture](../architecture/pipeline.md#selected-text-capture).
 
 ## STT
 

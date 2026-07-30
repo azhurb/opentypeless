@@ -41,6 +41,16 @@ fn normalize_for_output(text: &str, replaced_selection: bool) -> String {
     }
 }
 
+/// Whether this run should try to capture the foreground selection.
+///
+/// Gated on polish as well as the setting, because the captured selection is only
+/// ever read by the LLM request: with polish off, capturing would cost latency and
+/// churn the user's clipboard to produce something nothing consumes. The Settings
+/// toggle is disabled in the same case, so this is the second of two layers.
+fn should_capture_selection(selected_text_enabled: bool, polish_enabled: bool) -> bool {
+    selected_text_enabled && polish_enabled
+}
+
 /// Keep the dictation text on the clipboard and show the manual-paste tip when
 /// the paste did not land (no app consumed it) — but never in a terminal, which
 /// is a reliable paste target whose daily CLI flow shouldn't be interrupted.
@@ -302,6 +312,10 @@ impl PipelineHandle {
     }
 
     /// Capture selected text from the foreground app by simulating Ctrl+C / Cmd+C.
+    /// The fallback for targets Accessibility can't read — see
+    /// [`crate::correction::focused_selected_text`] for the preferred path, which is
+    /// tried first at record start.
+    ///
     /// Must be called when no hotkey modifier keys are physically held down.
     /// Called from async context via block_in_place, so std::thread::sleep is acceptable.
     fn capture_selected_text(&self) -> Option<String> {
@@ -385,6 +399,13 @@ impl PipelineHandle {
             .preloaded_dictionary
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
+        // The AX preflight can have filled this before whatever failed. The next
+        // start() clears it too, but keeping the invariant local beats depending on
+        // a later call to tidy up after this one.
+        *self
+            .preloaded_selected_text
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
         self.set_state(PipelineState::Idle);
     }
 
@@ -457,9 +478,9 @@ impl PipelineHandle {
             .detected_language
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
-        // Selected text is captured in stop() after the hotkey is released
-        // (so Ctrl+C simulation won't conflict with held keys). Clear the
-        // slot here so a fresh recording can't observe a leftover value.
+        // Clear the slot here so a fresh recording can't observe a leftover
+        // value. It's filled either by the Accessibility preflight below or, when
+        // that comes up empty, by the Cmd+C fallback in stop().
         *self
             .preloaded_selected_text
             .lock()
@@ -524,6 +545,41 @@ impl PipelineHandle {
             .preloaded_app_ctx
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(app_detector::detect_current_app());
+
+        // Accessibility preflight for selected-text editing. Runs here — before the
+        // slow STT connect — so the capsule can show the editing indicator while
+        // the user is still speaking, rather than only after they let go.
+        //
+        // This is a read-only AX query, so unlike the Cmd+C fallback it's safe with
+        // the hotkey still held. When it finds nothing, stop() still runs the
+        // clipboard capture: AX is blind to browser web content and Electron, so
+        // `None` here does not mean the user has nothing selected.
+        let editing_selection = if should_capture_selection(
+            config_data.selected_text_enabled,
+            config_data.polish_enabled,
+        ) {
+            let preloaded = crate::correction::focused_selected_text();
+            let found = preloaded.is_some();
+            tracing::info!(
+                "Selected-text AX preflight: found={}, len={}",
+                found,
+                preloaded.as_deref().map(|s| s.len()).unwrap_or(0)
+            );
+            *self
+                .preloaded_selected_text
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = preloaded;
+            found
+        } else {
+            false
+        };
+        // Emitted unconditionally, `false` included: a run with no selection has to
+        // positively clear the flag the previous run set, rather than relying on the
+        // idle transition having fired first.
+        let _ = self
+            .app_handle
+            .emit("pipeline:editing_selection", editing_selection);
+
         let dict_words = self
             .app_handle
             .state::<std::sync::Arc<storage::DictionaryStore>>()
@@ -725,35 +781,50 @@ impl PipelineHandle {
 
         let stop_start = std::time::Instant::now();
 
-        // Capture selected text now — hotkey is released so Ctrl+C won't conflict.
-        // Small delay to ensure hotkey modifiers are fully released (especially in toggle mode).
         let config_data = self
             .preloaded_config
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
             .unwrap_or_default();
-        // Gated on polish as well as the setting: the captured selection is only
-        // ever read by the LLM request, so with polish off the Cmd+C would cost
-        // latency and churn the user's clipboard to produce something nothing
-        // consumes. The Settings toggle is disabled in the same case.
-        let selected_text = if config_data.selected_text_enabled && config_data.polish_enabled {
+        // The Accessibility preflight in start() may already have the selection. When
+        // it does, skip the clipboard capture entirely — that saves the modifier-release
+        // delay, the keystroke, the clipboard settle, and the round-trip through the
+        // user's clipboard, all on the latency-critical path between releasing the
+        // hotkey and seeing text appear.
+        let preflighted = self
+            .preloaded_selected_text
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if !preflighted
+            && should_capture_selection(
+                config_data.selected_text_enabled,
+                config_data.polish_enabled,
+            )
+        {
+            // Capture now — the hotkey is released so Cmd/Ctrl+C won't conflict with
+            // held modifiers. The small delay is what makes that true in toggle mode.
             tokio::time::sleep(std::time::Duration::from_millis(
                 SELECTED_TEXT_CAPTURE_DELAY_MS,
             ))
             .await;
-            tokio::task::block_in_place(|| self.capture_selected_text())
-        } else {
-            None
-        };
-        tracing::info!(
-            "Selected text result: len={}",
-            selected_text.as_deref().map(|s| s.len()).unwrap_or(0)
-        );
-        *self
-            .preloaded_selected_text
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = selected_text;
+            let selected_text = tokio::task::block_in_place(|| self.capture_selected_text());
+            tracing::info!(
+                "Selected-text clipboard fallback: len={}",
+                selected_text.as_deref().map(|s| s.len()).unwrap_or(0)
+            );
+            // The late signal for targets Accessibility can't read. The capsule gets
+            // its editing indicator now instead of at record start — the best that's
+            // possible when the selection only becomes visible via the clipboard.
+            if selected_text.is_some() {
+                let _ = self.app_handle.emit("pipeline:editing_selection", true);
+            }
+            *self
+                .preloaded_selected_text
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = selected_text;
+        }
 
         // Stop audio capture (this drops the channel, signaling STT task to stop)
         {
@@ -1169,6 +1240,12 @@ impl PipelineHandle {
         if retain {
             tracing::info!("Output paste did not land; left text on clipboard for manual paste");
             let _ = self.app_handle.emit_to("capsule", "output:no_target", ());
+        } else if replaced_selection {
+            // Replacing a selection is destructive in a way inserting text isn't, so
+            // it gets an explicit confirmation with the undo shortcut. Guarded on the
+            // paste having landed: a paste sitting unclaimed on the clipboard has
+            // nothing to confirm, and the manual-paste tip is the useful message there.
+            let _ = self.app_handle.emit_to("capsule", "output:edited", ());
         }
 
         let _ = self
@@ -1226,9 +1303,26 @@ impl PipelineHandle {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_for_output, output_error_message, should_retain_on_clipboard,
-        with_trailing_space, ACCESSIBILITY_REQUIRED_CODE,
+        normalize_for_output, output_error_message, should_capture_selection,
+        should_retain_on_clipboard, with_trailing_space, ACCESSIBILITY_REQUIRED_CODE,
     };
+
+    #[test]
+    fn selection_is_captured_only_when_both_flags_are_on() {
+        assert!(should_capture_selection(true, true));
+        assert!(!should_capture_selection(true, false));
+        assert!(!should_capture_selection(false, true));
+        assert!(!should_capture_selection(false, false));
+    }
+
+    #[test]
+    fn polish_off_blocks_capture_even_with_the_feature_enabled() {
+        // Regression guard for the shipped bug: the toggle could be switched on
+        // with polish off, and the pipeline captured a selection that only the LLM
+        // request reads — so the Cmd+C cost latency and churned the clipboard to
+        // produce something that was immediately discarded.
+        assert!(!should_capture_selection(true, false));
+    }
 
     #[test]
     fn selection_replacement_gets_no_trailing_space() {

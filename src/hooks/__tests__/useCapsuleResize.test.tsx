@@ -141,3 +141,77 @@ describe('useCapsuleResize — reacts to config changes from other windows', () 
     expect(hide).not.toHaveBeenCalled()
   })
 })
+
+describe('useCapsuleResize — the edited tip keeps the capsule on screen', () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState())
+    show.mockClear()
+    hide.mockClear()
+    setSize.mockClear()
+    setPosition.mockClear()
+  })
+
+  it('shows the capsule for the edited tip even with auto-hide on in idle', async () => {
+    // The tip fires after output, by which point the pipeline is back to idle. If
+    // it weren't part of shouldBeVisible, auto-hide would pull the window before
+    // the tip could render and the user would never learn the edit was undoable.
+    useAppStore.getState().setConfig(makeConfig({ capsule_auto_hide: true }))
+
+    renderHook(() => useCapsuleResize())
+    await flushAsync()
+    expect(hide).toHaveBeenCalledTimes(1)
+    hide.mockClear()
+
+    act(() => {
+      useAppStore.getState().setEditedTip(true)
+    })
+    await flushAsync()
+
+    expect(show).toHaveBeenCalledTimes(1)
+    expect(hide).not.toHaveBeenCalled()
+  })
+
+  it('hides again once the tip clears itself', async () => {
+    useAppStore.getState().setConfig(makeConfig({ capsule_auto_hide: true }))
+    useAppStore.getState().setEditedTip(true)
+
+    renderHook(() => useCapsuleResize())
+    await flushAsync()
+    hide.mockClear()
+
+    act(() => {
+      useAppStore.getState().setEditedTip(false)
+    })
+    await flushAsync()
+
+    expect(hide).toHaveBeenCalledTimes(1)
+  })
+
+  it('sizes the tip like the clipboard tip, and lets the clipboard tip win', async () => {
+    const { result } = renderHook(() => useCapsuleResize())
+    await flushAsync()
+
+    act(() => {
+      useAppStore.getState().setEditedTip(true)
+    })
+    expect(result.current).toEqual({ width: 220, height: 36 })
+
+    // Both set: same dimensions, so this asserts the ordering doesn't change the
+    // size — it's the capsule's getCapsuleState that decides which pill renders.
+    act(() => {
+      useAppStore.getState().setClipboardTip(true)
+    })
+    expect(result.current).toEqual({ width: 220, height: 36 })
+  })
+
+  it('does not let the tip outrank the context menu', async () => {
+    const { result } = renderHook(() => useCapsuleResize())
+    await flushAsync()
+
+    act(() => {
+      useAppStore.getState().setEditedTip(true)
+      useAppStore.getState().setContextMenuOpen(true)
+    })
+    expect(result.current).toEqual({ width: 220, height: 220 })
+  })
+})

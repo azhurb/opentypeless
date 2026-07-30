@@ -161,3 +161,55 @@ describe('useTauriEvents — config:changed event', () => {
     expect(useAppStore.getState().configLoaded).toBe(true)
   })
 })
+
+describe('useTauriEvents — selected-text editing events', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  async function mount() {
+    renderHook(() => useTauriEvents())
+    await act(async () => {
+      await Promise.resolve()
+    })
+  }
+
+  it('sets editingSelection when Rust reports a captured selection', async () => {
+    await mount()
+    await fire('pipeline:editing_selection', true)
+    expect(useAppStore.getState().editingSelection).toBe(true)
+  })
+
+  it('clears editingSelection on a false payload', async () => {
+    // Rust emits this on every run, `false` included. Honouring the false is what
+    // stops a run with nothing selected from inheriting the previous run's ring —
+    // relying on the idle transition alone would leave a window where the ring is
+    // up for a dictation that isn't editing anything.
+    await mount()
+    await fire('pipeline:editing_selection', true)
+    await fire('pipeline:editing_selection', false)
+    expect(useAppStore.getState().editingSelection).toBe(false)
+  })
+
+  it('clears editingSelection when the pipeline returns to idle', async () => {
+    await mount()
+    await fire('pipeline:editing_selection', true)
+    await fire('pipeline:state', 'idle')
+    expect(useAppStore.getState().editingSelection).toBe(false)
+  })
+
+  it('raises the edited tip on output:edited', async () => {
+    await mount()
+    await fire('output:edited', undefined)
+    expect(useAppStore.getState().editedTip).toBe(true)
+  })
+
+  it('dismisses a lingering edited tip when a new recording starts', async () => {
+    await mount()
+    await fire('output:edited', undefined)
+    await fire('pipeline:state', 'recording')
+    expect(useAppStore.getState().editedTip).toBe(false)
+    // The clipboard tip is cleared by the same branch and must stay cleared.
+    expect(useAppStore.getState().clipboardTip).toBe(false)
+  })
+})

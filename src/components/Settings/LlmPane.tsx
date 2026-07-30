@@ -230,15 +230,25 @@ export function LlmPane() {
           onChange={(checked) => updateConfig({ translate_enabled: checked })}
           label={t('settings.translationMode')}
         />
+        {/* Only the LLM request ever reads the captured selection, so with polish
+            off this setting is a silent no-op — hence disabled rather than merely
+            documented. The pipeline enforces the same rule independently. */}
         <Toggle
           checked={config.selected_text_enabled}
           onChange={(checked) => updateConfig({ selected_text_enabled: checked })}
-          label={t('settings.selectedTextContext')}
+          label={t('settings.selectedTextEditing')}
+          disabled={!config.polish_enabled}
         />
-        {config.selected_text_enabled && (
+        {!config.polish_enabled ? (
           <p className="text-[11px] text-text-tertiary -mt-1 ml-[52px]">
-            {t('settings.selectedTextContextDesc')}
+            {t('settings.selectedTextEditingRequiresPolish')}
           </p>
+        ) : (
+          config.selected_text_enabled && (
+            <p className="text-[11px] text-text-tertiary -mt-1 ml-[52px]">
+              {t('settings.selectedTextEditingDesc')}
+            </p>
+          )
         )}
       </div>
 

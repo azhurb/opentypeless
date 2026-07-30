@@ -71,6 +71,20 @@ codesign -d -r- /Applications/OpenTypeless.app
 
 The macOS Microphone dialog is one-shot per install. If you dismissed or denied it, the only path forward is System Settings → Privacy & Security → Microphone. The onboarding Permissions step surfaces a deeplink button for this case.
 
+## "Editing selected text by voice does nothing"
+
+Check these in order:
+
+1. **Is AI Polish on?** Settings → LLM. The LLM is what applies the spoken instruction, so with polish off the setting does nothing at all. The toggle is disabled in that state and says so, but a config saved by an older version can still have the feature on with polish off — turn polish on and the gate clears.
+2. **Was the text still selected when you pressed the hotkey?** Clicking into another window to reach the capsule drops the selection in most apps. Use the hotkey, not the capsule, and keep focus where the text is.
+3. **Did the capsule show the amber ring?** No ring means nothing was captured, and the dictation was inserted as ordinary text rather than treated as an instruction. In a browser or an Electron app the ring only appears once you release the hotkey, because the selection has to come through the clipboard there — see [Pipeline → Selected-Text Capture](../architecture/pipeline.md#selected-text-capture).
+4. **Was what you said plausibly an instruction?** Dictating ordinary prose with something selected is treated as dictation, deliberately: the alternative is mangling a paragraph because you happened to have it highlighted.
+5. **Password fields are never read**, by design.
+
+Nothing is lost when an edit fails: the selection is left untouched and the error is surfaced. The raw transcript is never pasted over selected text.
+
 ## Non-macOS
 
 The Permissions step is skipped on Linux and Windows — neither needs per-app Microphone or Accessibility grants. If recording fails, check that the default input device is selected in the OS sound settings.
+
+Editing selected text by voice works on both, via a Ctrl+C capture rather than the macOS Accessibility read. The only difference is timing: the capsule's mode ring appears when the hotkey is released rather than at the start of recording.
