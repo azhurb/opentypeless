@@ -440,6 +440,24 @@ body,
   z-index: 1;
 }
 
+/* ─── Jelly Capsule — editing a selection (amber ring) ───
+   Composes with .jelly-capsule-active and must stay after it: both are
+   single-class selectors, so source order is what decides the winner.
+
+   The ring is an inset shadow rather than a border on purpose. .jelly-capsule-active
+   sets `border: none` with `overflow: hidden`, and giving it a real 1px border would
+   change the box model and resize the pill mid-run. box-shadow replaces rather than
+   merges, so the four layers above are repeated verbatim and the ring appended.
+   The amber is --color-warning: this dictation will overwrite text you already have. */
+.jelly-capsule-editing {
+  box-shadow:
+    inset 0 1px 4px rgba(255, 255, 255, 0.12),
+    inset 0 -1px 3px rgba(0, 0, 0, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.15),
+    0 4px 16px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 1px rgba(255, 149, 0, 0.9);
+}
+
 /* ─── Jelly Capsule — error state (mid-grey gel) ─── */
 .jelly-capsule-error {
   position: relative;

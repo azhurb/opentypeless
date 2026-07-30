@@ -6,19 +6,35 @@ interface CapsuleSize {
   height: number
 }
 
-function getSizeForState(
-  state: PipelineState,
-  expanded: boolean,
-  hasError: boolean,
-  contextMenuOpen: boolean,
-  hasCorrectionToast: boolean,
-  hasClipboardTip: boolean,
-): CapsuleSize {
+// An options object rather than positional flags: there are enough of these that
+// a transposed pair would be silently wrong and invisible at the call site.
+interface CapsuleSizeInput {
+  state: PipelineState
+  expanded: boolean
+  hasError: boolean
+  contextMenuOpen: boolean
+  hasCorrectionToast: boolean
+  hasClipboardTip: boolean
+  hasEditedTip: boolean
+}
+
+function getSizeForState({
+  state,
+  expanded,
+  hasError,
+  contextMenuOpen,
+  hasCorrectionToast,
+  hasClipboardTip,
+  hasEditedTip,
+}: CapsuleSizeInput): CapsuleSize {
   if (contextMenuOpen) return { width: 220, height: 220 }
   if (hasError) return { width: 200, height: 36 }
   // Clipboard tip: wide pill for "Copied — press ⌘V to paste". Shown post-
   // output (state is idle), so size it here rather than in the state switch.
   if (hasClipboardTip) return { width: 220, height: 36 }
+  // Edited tip: same shape, same reason. Ordered after the clipboard tip to match
+  // the capsule's own priority in getCapsuleState.
+  if (hasEditedTip) return { width: 220, height: 36 }
   // Correction toast: wide pill that replaces the idle mic; needs room for
   // "Added \"<word>\" to your dictionary" plus the Undo button.
   if (hasCorrectionToast && state === 'idle') return { width: 320, height: 36 }
@@ -52,6 +68,7 @@ export function useCapsuleResize() {
   const configLoaded = useAppStore((s) => s.configLoaded)
   const correctionSuggestion = useAppStore((s) => s.correctionSuggestion)
   const clipboardTip = useAppStore((s) => s.clipboardTip)
+  const editedTip = useAppStore((s) => s.editedTip)
   const initialized = useRef(false)
   const prevWindowSize = useRef<{ width: number; height: number } | null>(null)
   const prevCorrectionPresent = useRef(false)
@@ -72,18 +89,20 @@ export function useCapsuleResize() {
     hasError ||
     hasCorrectionToast ||
     clipboardTip ||
+    editedTip ||
     contextMenuOpen ||
     capsuleExpanded
 
   useEffect(() => {
-    const size = getSizeForState(
-      pipelineState,
-      capsuleExpanded,
+    const size = getSizeForState({
+      state: pipelineState,
+      expanded: capsuleExpanded,
       hasError,
       contextMenuOpen,
       hasCorrectionToast,
-      clipboardTip,
-    )
+      hasClipboardTip: clipboardTip,
+      hasEditedTip: editedTip,
+    })
     const windowWidth = size.width + 24
     const windowHeight = size.height + 24
 
@@ -218,15 +237,17 @@ export function useCapsuleResize() {
     setContextMenuReady,
     hasCorrectionToast,
     clipboardTip,
+    editedTip,
     shouldBeVisible,
   ])
 
-  return getSizeForState(
-    pipelineState,
-    capsuleExpanded,
+  return getSizeForState({
+    state: pipelineState,
+    expanded: capsuleExpanded,
     hasError,
     contextMenuOpen,
     hasCorrectionToast,
-    clipboardTip,
-  )
+    hasClipboardTip: clipboardTip,
+    hasEditedTip: editedTip,
+  })
 }

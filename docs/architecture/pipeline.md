@@ -16,26 +16,41 @@ State changes emit `pipeline:state` to the frontend and update tray tooltip / ca
 2. State moves `Idle → Recording`.
 3. Audio capture opens first, before any of the slow async setup. The cpal stream feeds an mpsc channel bounded at ~4 s of headroom (200 chunks of 20 ms), so samples buffer locally while the rest of setup runs — collapsing the dead window between hotkey press and first-captured audio.
 4. Config, current foreground-app context, and dictionary are loaded.
-5. STT API config is built. The key is read from the OS credential vault by `(stt, provider)` — it is not in `AppConfig`. No key aborts the pipeline, tearing down the running audio capture via `cleanup_failed_start()`; a vault that cannot be *read* aborts with a distinct message, since telling the user to re-enter a key that is already there sends them the wrong way. Only the key's length is ever logged.
-6. STT provider connects. For streaming providers (Deepgram, AssemblyAI) this is a full WebSocket handshake — audio keeps buffering during the handshake, including across a retried attempt (see [Transient Failure Retry](#transient-failure-retry)).
-7. The STT forwarder task spawns, immediately flushing any pre-buffered chunks into the now-connected provider.
-8. Partial and final transcript events are emitted to the frontend.
+5. **Selected-text Accessibility preflight** (macOS). When `should_capture_selection` passes, `correction::focused_selected_text()` reads `AXSelectedText` off the system-wide focused element. A hit is stored in `preloaded_selected_text` and lets `stop()` skip the clipboard capture entirely. Either way `pipeline:editing_selection` is emitted with the boolean. Placed here — after app detection, before the STT connect — so the capsule can show the editing indicator while the user is still speaking. Being a read-only AX query rather than a keystroke is what makes it safe with the hotkey still physically held. See [Selected-Text Capture](#selected-text-capture).
+6. STT API config is built. The key is read from the OS credential vault by `(stt, provider)` — it is not in `AppConfig`. No key aborts the pipeline, tearing down the running audio capture via `cleanup_failed_start()`; a vault that cannot be *read* aborts with a distinct message, since telling the user to re-enter a key that is already there sends them the wrong way. Only the key's length is ever logged.
+7. STT provider connects. For streaming providers (Deepgram, AssemblyAI) this is a full WebSocket handshake — audio keeps buffering during the handshake, including across a retried attempt (see [Transient Failure Retry](#transient-failure-retry)).
+8. The STT forwarder task spawns, immediately flushing any pre-buffered chunks into the now-connected provider.
+9. Partial and final transcript events are emitted to the frontend.
 
 Background: audio capture used to be the *last* step of setup. With streaming STT the WebSocket handshake (~100–500 ms) plus foreground-app detection plus cpal cold-start meant the first ~300–1200 ms of user speech was discarded. See [`docs/plans/active/dictation-startup-latency.md`](../plans/active/dictation-startup-latency.md) for the full timing breakdown, the macOS native-detection rewrite that lives alongside this change, and the deferred follow-ups.
 
 ## Stop Flow
 
 1. State moves `Recording → Transcribing`.
-2. If selected-text mode is enabled **and polish is enabled** — `should_capture_selection` decides, and the second half matters because only the LLM request ever reads the captured selection, so with polish off the capture would churn the clipboard to produce something nothing consumes — the pipeline waits `SELECTED_TEXT_CAPTURE_DELAY_MS` so hotkey modifiers can be released, then synthesizes Cmd/Ctrl+C and restores clipboard contents. On macOS the keystroke is a pair of prebuilt `CGEvent`s carrying a fixed, layout-independent key code, posted from the Tauri main thread via `output::copy_selection`; resolving a *character* to a key code instead would enter HIToolbox Text Services, which asserts it is on the main queue and aborts the process from a Tokio worker. See [Output Path](#output-path) for the paste side of the same constraint.
+2. Selected-text capture, **only when the Accessibility preflight in start step 5 came up empty**. See [Selected-Text Capture](#selected-text-capture).
 3. Audio capture stops; pipeline waits for STT finalization. Closing the audio channel is what drives `disconnect()`, and for streaming providers that call now briefly drains whatever the provider flushes in response to its finish signal — see [Providers → Draining the close of a streaming session](providers.md#draining-the-close-of-a-streaming-session). Text recovered there arrives through the same `DisconnectResult` branch that file-based providers use.
 4. If polish is enabled, final text is sent to the LLM provider. A transient failure of the request itself is retried (see [Transient Failure Retry](#transient-failure-retry)).
 5. Output runs (clipboard paste — see [Output Path](#output-path)).
 6. History is stored — **only if `history_enabled`**, re-read here rather than taken from the recording-start config snapshot so a mid-dictation opt-out is honored. When it is off the insert is skipped and only the retention prune runs. See [Storage → Retention](storage.md#retention).
 7. State returns to `Idle`.
 
+## Selected-Text Capture
+
+When `selected_text_enabled` is on, a dictation *edits the user's selection* instead of inserting text: the transcript becomes an instruction, the selection becomes the material, and the polished result replaces the selection. The capture has two paths, tried in that order.
+
+**Gate.** `should_capture_selection(selected_text_enabled, polish_enabled)` — both must be true. Only the LLM request ever reads the captured selection, so with polish off the capture would cost latency and churn the user's clipboard to produce something nothing consumes. The Settings toggle is disabled in the same state, so this is the second of two layers.
+
+**1. Accessibility preflight (macOS, start step 5).** `correction::focused_selected_text()` reads `AXSelectedText` off the system-wide focused element, guarding against `AXSecureTextField` so password fields are never read. Read-only — no keystroke, no clipboard write — so unlike the fallback it is safe while the hotkey is still physically held, which is what lets the capsule show the editing indicator during recording rather than after release. A hit also means `stop()` skips the fallback entirely, saving the modifier-release delay, the keystroke, the clipboard settle, and a round-trip through the user's clipboard on the latency-critical path.
+
+**2. Clipboard fallback (all platforms, stop step 2).** Waits `SELECTED_TEXT_CAPTURE_DELAY_MS` so hotkey modifiers are fully released, synthesizes Cmd/Ctrl+C, reads the clipboard, and restores the previous contents. On macOS the keystroke is a pair of prebuilt `CGEvent`s carrying a fixed, layout-independent key code, posted from the Tauri main thread via `output::copy_selection`; resolving a *character* to a key code instead would enter HIToolbox Text Services, which asserts it is on the main queue and aborts the process from a Tokio worker. See [Output Path](#output-path) for the paste side of the same constraint.
+
+**The fallback is not optional.** A `None` from the preflight cannot distinguish "the user has nothing selected" from "Accessibility is blind here", and the latter is the normal case in browser web content and Electron apps. So the preflight only ever makes capture faster and better-signalled; it never narrows coverage. Off macOS there is no preflight at all (`correction::ax_stub`) and the fallback is the only path.
+
+`replaced_selection` — whether the LLM request carried a selection — then drives three things downstream: no trailing space on output, no raw-transcript fallback if the LLM call fails, and no correction watcher. See [Important Invariants](#important-invariants).
+
 ## Transient Failure Retry
 
-A 429 or 5xx from the STT or LLM provider used to fail the whole dictation: the user spoke for thirty seconds, waited, and got an error for a call that would have succeeded on a second attempt. Three points in the flow now retry with exponential backoff (3 attempts, 400 ms doubling to 800 ms) — the streaming STT handshake in start step 6, the Whisper-compatible upload that produces the transcript on `disconnect()`, and the request head of the LLM polish in stop step 4.
+A 429 or 5xx from the STT or LLM provider used to fail the whole dictation: the user spoke for thirty seconds, waited, and got an error for a call that would have succeeded on a second attempt. Three points in the flow now retry with exponential backoff (3 attempts, 400 ms doubling to 800 ms) — the streaming STT handshake in start step 7, the Whisper-compatible upload that produces the transcript on `disconnect()`, and the request head of the LLM polish in stop step 4.
 
 Retry is deliberately **not** applied to mid-stream calls (`send_audio`, `recv_transcript`), because the STT session is stateful and a resend would reorder or duplicate audio, nor to the LLM response body once chunks have started reaching `llm:chunk`. The full safety table, what counts as transient, and why retries emit no user-facing event live in [Providers → Retry Policy](providers.md#retry-policy).
 
@@ -50,12 +65,14 @@ Pipeline-related events emitted by the backend:
 - `pipeline:state` — state transitions.
 - `pipeline:error` — recoverable errors (STT/LLM/output failures, "no speech detected"). Two emitted payloads are matched on exactly by the frontend and trigger non-default UX: `ACCESSIBILITY_REQUIRED` (paste pre-flight saw no AX grant) and `MICROPHONE_DENIED` (record pre-flight saw `denied` / `restricted` mic status). Both are emitted bare, not wrapped in `"Output failed: …"`. See [Frontend ↔ Backend → Events](frontend-backend.md#events) for the frontend handling.
 - `pipeline:target_app` — the foreground app captured for the current run.
+- `pipeline:editing_selection` — boolean payload: whether this run will replace the user's selection rather than insert text. Emitted on **every** run including `false`, so a dictation with nothing selected positively clears the flag the previous run set instead of relying on the idle transition having fired. Fires at record start when the Accessibility preflight sees the selection, and at stop when only the clipboard fallback could. The capsule maps it to an amber mode ring. See [Selected-Text Capture](#selected-text-capture).
 - `audio:volume` — input level samples for the capsule waveform.
 - `stt:partial`, `stt:final` — transcript updates.
 - `llm:chunk` — streamed polished text from the LLM.
 - `pipeline:timing` — per-dictation summary fired after output completes. Payload: `{ stt_ms, llm_ms, total_ms, recording_ms, detected_language }`. `detected_language` is the ISO-639-1 code reported by the STT for this utterance (`null` when unavailable). The frontend `useDetectedLanguageNotifier` hook uses this to fire a rate-limited toast when the detected language isn't in `config.stt_languages`.
 - `correction:suggest` — emitted to the capsule window when the post-dictation watcher finds a single-word substitution that passes the heuristic. Payload: `{ rowId, old, new, autoConfirmMs }`. The watcher runs only when `learn_from_corrections_enabled` is set in `AppConfig` and macOS Accessibility is granted.
 - `output:no_target` — emitted to the capsule window (no payload) when a paste did not land anywhere (nothing consumed the clipboard) and the dictation was left on the clipboard for a manual paste. The capsule shows a "press ⌘V to paste" tip. macOS only; never fired for terminals or chunked pastes. See [Output Path → Paste-landing detection](#paste-landing-detection).
+- `output:edited` — emitted to the capsule window (no payload) when a paste **landed** and it replaced a selection. The capsule shows an "Edited — press ⌘Z to undo" tip: this is the one output path that destroys something the user already had, so it gets an explicit receipt carrying the undo shortcut. Mutually exclusive with `output:no_target` by construction — a paste sitting unclaimed on the clipboard has nothing to confirm.
 
 ### Detected language threading
 

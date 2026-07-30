@@ -20,6 +20,8 @@ export function useTauriEvents() {
     setAccessibilityTrusted,
     setMicAuthStatus,
     setClipboardTip,
+    setEditingSelection,
+    setEditedTip,
   } = useAppStore()
 
   useEffect(() => {
@@ -49,10 +51,15 @@ export function useTauriEvents() {
       if (state === 'recording') {
         // Clear any previous error when starting a new pipeline run
         setPipelineError(null)
-        // Dismiss a lingering clipboard tip — the user is dictating again.
+        // Dismiss lingering tips — the user is dictating again.
         setClipboardTip(false)
+        setEditedTip(false)
       }
       if (state === 'idle') {
+        // The mode ring belongs to a run, not to the idle capsule. Rust also emits
+        // `pipeline:editing_selection(false)` at the start of every run, so this is
+        // the second of two independent clears.
+        setEditingSelection(false)
         // Don't clear pipelineError here — CapsuleError auto-resets after 2.5s.
         // Clearing here would swallow errors from failed start() calls that
         // transition Recording → Idle in rapid succession.
@@ -64,6 +71,12 @@ export function useTauriEvents() {
       }
     })
     addListener<string>('pipeline:target_app', setTargetApp)
+
+    // Whether this run edits a selection instead of inserting text. Emitted on
+    // every run including `false`, so a dictation with nothing selected positively
+    // clears the previous run's ring rather than inheriting it.
+    addListener<boolean>('pipeline:editing_selection', setEditingSelection)
+
     addListener<string>('pipeline:error', (error) => {
       setPipelineError(error)
       if (error === 'ACCESSIBILITY_REQUIRED') {
@@ -90,6 +103,12 @@ export function useTauriEvents() {
       if (err && err !== 'ACCESSIBILITY_REQUIRED' && err !== 'MICROPHONE_DENIED') {
         setPipelineError(null)
       }
+    })
+
+    // A selection was successfully replaced. Confirm it with the undo shortcut —
+    // this is the one output path that destroyed something the user already had.
+    addListener<void>('output:edited', () => {
+      setEditedTip(true)
     })
 
     addListener<void>('tray:settings', () => {
@@ -163,5 +182,7 @@ export function useTauriEvents() {
     setAccessibilityTrusted,
     setMicAuthStatus,
     setClipboardTip,
+    setEditingSelection,
+    setEditedTip,
   ])
 }

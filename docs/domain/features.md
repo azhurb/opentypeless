@@ -55,7 +55,7 @@ Repo evidence:
 - `polish_enabled`, `translate_enabled`, and `target_lang` are part of `AppConfig`.
 - LLM calls are orchestrated in `src-tauri/src/pipeline.rs`.
 - Prompt construction lives in `src-tauri/src/llm/prompt.rs`.
-- The LLM Settings pane exposes provider, model, base URL, AI polish, translation, and selected-text context controls.
+- The LLM Settings pane exposes provider, model, base URL, AI polish, translation, and selected-text editing controls. The selected-text toggle is **disabled while AI Polish is off** — the LLM is what applies the spoken instruction, so the setting would otherwise be enableable into a silent no-op.
 
 There are **two prompts**, selected by whether a selection was captured, not one prompt with an addon. Dictation polishing and instruction-driven editing want opposite things — the first forbids rephrasing and caps the output at the length of the input, the second exists to rephrase and has no meaningful length relationship to what was spoken — so appending the second set of rules to the first produced a prompt the model could not satisfy.
 
@@ -88,6 +88,28 @@ For Gemini models (any model name containing `gemini`), the LLM request addition
 Needs confirmation:
 
 - The core polish prompt is compiled in Rust and not directly user-editable in Settings.
+
+### Editing Selected Text By Voice
+
+Off by default (`selected_text_enabled`). With it on, selecting text in any app and then dictating turns the dictation into an *instruction about that text*: say "fix the grammar" or "make this a bullet list" and the selection is replaced with the result. Dictate ordinary prose instead and it is inserted as usual — the prompt's fallback rule covers the case where the user had something selected incidentally.
+
+User-facing behavior:
+
+- **Mode indicator.** When the app knows a selection was captured, the capsule pill takes an amber ring for the whole run. No size or layout change. On macOS with Accessibility able to read the field the ring appears at record start, while the user is still speaking; where only the clipboard fallback works it appears once they release the hotkey.
+- **Confirmation.** After a successful replacement the capsule shows "Edited — press ⌘Z to undo" for 3 s. Replacing a selection is the one output path that destroys something the user already had, so it gets an explicit receipt with the undo shortcut.
+- **Failure is non-destructive.** If the LLM call fails, the selection is left untouched and the error is surfaced. The raw transcript is never pasted over selected text.
+- **Requires AI Polish**, since the LLM is what applies the instruction. The Settings toggle is disabled with a hint when polish is off, and the pipeline enforces the same rule independently.
+- **Password fields are never read.** The Accessibility path guards on `AXSecureTextField`.
+
+Platform matrix:
+
+| | Selection capture | Ring appears |
+|---|---|---|
+| macOS, Accessibility can read the field | Accessibility preflight, no keystroke | At record start |
+| macOS, Accessibility blind (browser web content, Electron) | Cmd+C fallback | At hotkey release |
+| Windows / Linux | Ctrl+C fallback | At hotkey release |
+
+Mechanism: [Pipeline → Selected-Text Capture](../architecture/pipeline.md#selected-text-capture).
 
 ## Language Support And Auto Detection
 

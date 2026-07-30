@@ -10,6 +10,7 @@ import { CapsulePolishing } from './CapsulePolishing'
 import { CapsuleComplete } from './CapsuleComplete'
 import { CapsuleError } from './CapsuleError'
 import { CapsuleClipboardTip } from './CapsuleClipboardTip'
+import { CapsuleEditedTip } from './CapsuleEditedTip'
 import { CapsuleContextMenu } from './CapsuleContextMenu'
 import { CorrectionToast } from './CorrectionToast'
 
@@ -19,10 +20,16 @@ const DRAG_THRESHOLD = 5
 // with a clipboard retain — they bail before output — so they always win.
 const PERMISSION_ERRORS = new Set(['ACCESSIBILITY_REQUIRED', 'MICROPHONE_DENIED'])
 
+// States during which a selection edit is still in flight, so the mode ring
+// should be up. `outputting` is included so the ring doesn't blink off for the
+// ~400ms CapsuleComplete frame immediately before the edited tip.
+const EDITING_RING_STATES = new Set(['recording', 'transcribing', 'polishing', 'outputting'])
+
 function getCapsuleState(
   pipelineState: string,
   pipelineError: string | null,
   clipboardTip: boolean,
+  editedTip: boolean,
 ) {
   if (pipelineError && PERMISSION_ERRORS.has(pipelineError)) return 'error'
   // When a dictation was left on the clipboard (no paste target), that tip is
@@ -30,6 +37,11 @@ function getCapsuleState(
   // recoverable — so it outranks a transient (soft) polish/STT error.
   if (clipboardTip) return 'clipboardTip'
   if (pipelineError) return 'error'
+  // Ranked below errors and the clipboard tip: those are things the user has to
+  // act on, where this only confirms something that already worked. Rust guards
+  // the pairing too (it emits `output:edited` only when the paste landed), so in
+  // practice this never competes with the clipboard tip.
+  if (editedTip) return 'editedTip'
   return pipelineState
 }
 
@@ -43,6 +55,9 @@ export function Capsule() {
   const correctionSuggestion = useAppStore((s) => s.correctionSuggestion)
   const clipboardTip = useAppStore((s) => s.clipboardTip)
   const setClipboardTip = useAppStore((s) => s.setClipboardTip)
+  const editingSelection = useAppStore((s) => s.editingSelection)
+  const editedTip = useAppStore((s) => s.editedTip)
+  const setEditedTip = useAppStore((s) => s.setEditedTip)
   const { startRecording, stopRecording, isRecording, isProcessing } = useRecording()
 
   const dragStart = useRef<{ x: number; y: number } | null>(null)
@@ -51,7 +66,8 @@ export function Capsule() {
   useCapsuleResize()
 
   const hasError = pipelineError !== null
-  const capsuleState = getCapsuleState(pipelineState, pipelineError, clipboardTip)
+  const capsuleState = getCapsuleState(pipelineState, pipelineError, clipboardTip, editedTip)
+  const showEditingRing = editingSelection && EDITING_RING_STATES.has(capsuleState)
   // While a correction toast is visible in idle mode, the toast takes the whole
   // capsule window — hide the regular pill so they don't overlap.
   const showToast = correctionSuggestion !== null && pipelineState === 'idle' && !hasError
@@ -112,6 +128,10 @@ export function Capsule() {
         // Tip is informational — a click just dismisses it (don't fall through
         // to startRecording).
         setClipboardTip(false)
+      } else if (editedTip) {
+        // Same as the clipboard tip: informational, so dismiss rather than
+        // starting a recording the user didn't ask for.
+        setEditedTip(false)
       } else if (!isProcessing && !hasError && pipelineState === 'idle') {
         startRecording()
       }
@@ -124,6 +144,8 @@ export function Capsule() {
       pipelineState,
       clipboardTip,
       setClipboardTip,
+      editedTip,
+      setEditedTip,
       startRecording,
       stopRecording,
     ],
@@ -156,7 +178,7 @@ export function Capsule() {
               : capsuleState === 'idle'
                 ? 'jelly-capsule text-neutral-700'
                 : 'jelly-capsule-active text-white'
-          }`}
+          }${showEditingRing ? ' jelly-capsule-editing' : ''}`}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -176,6 +198,7 @@ export function Capsule() {
               {capsuleState === 'outputting' && <CapsuleComplete />}
               {capsuleState === 'error' && <CapsuleError />}
               {capsuleState === 'clipboardTip' && <CapsuleClipboardTip />}
+              {capsuleState === 'editedTip' && <CapsuleEditedTip />}
             </motion.div>
           </AnimatePresence>
         </motion.div>

@@ -2,6 +2,13 @@
 
 use super::{FieldSnapshot, FocusedField};
 
+/// No Accessibility equivalent outside macOS, so the pipeline always falls back
+/// to the clipboard capture. See the macOS twin for what `None` does and does
+/// not mean.
+pub fn focused_selected_text() -> Option<String> {
+    None
+}
+
 pub struct StubFocusedField;
 
 impl FocusedField for StubFocusedField {

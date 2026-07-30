@@ -27,8 +27,9 @@ vi.mock('react-i18next', () => ({
         'settings.modelsAvailable': `${params?.count || 0} models available`,
         'settings.enableAiPolish': 'Enable AI Polish',
         'settings.translationMode': 'Translation Mode',
-        'settings.selectedTextContext': 'Selected Text Context',
-        'settings.selectedTextContextDesc': 'Include selected text as context',
+        'settings.selectedTextEditing': 'Edit selected text by voice',
+        'settings.selectedTextEditingDesc': 'Speak an instruction to rewrite the selection',
+        'settings.selectedTextEditingRequiresPolish': 'Requires AI Polish',
         'settings.targetLanguage': 'Target Language',
       }
       return translations[key] || key
@@ -288,6 +289,73 @@ describe('LlmPane', () => {
 
       render(<LlmPane />)
       expect(screen.getByText('Target Language')).toBeInTheDocument()
+    })
+  })
+
+  // The selected text is only ever read by the LLM request, so with polish off
+  // this setting does nothing at all. It shipped enableable in that state, which
+  // is how it came to look broken: users turned it on and nothing happened.
+  describe('Selected-text editing gate', () => {
+    /** The toggle's switch button, found via its label. */
+    function selectedTextSwitch(): HTMLElement {
+      const switches = screen.getAllByRole('switch')
+      const match = switches.find((s) =>
+        s.parentElement?.textContent?.includes('Edit selected text by voice'),
+      )
+      if (!match) throw new Error('selected-text toggle not found')
+      return match
+    }
+
+    it('disables the toggle and explains why when AI Polish is off', () => {
+      mockAppStore.config.polish_enabled = false
+
+      render(<LlmPane />)
+
+      expect(selectedTextSwitch()).toBeDisabled()
+      expect(selectedTextSwitch()).toHaveAttribute('aria-disabled', 'true')
+      expect(screen.getByText('Requires AI Polish')).toBeInTheDocument()
+    })
+
+    it('does not update config when the disabled toggle is clicked', () => {
+      mockAppStore.config.polish_enabled = false
+
+      render(<LlmPane />)
+      fireEvent.click(selectedTextSwitch())
+
+      expect(mockAppStore.updateConfig).not.toHaveBeenCalled()
+    })
+
+    it('enables the toggle when AI Polish is on', () => {
+      mockAppStore.config.polish_enabled = true
+
+      render(<LlmPane />)
+
+      expect(selectedTextSwitch()).not.toBeDisabled()
+      expect(screen.queryByText('Requires AI Polish')).not.toBeInTheDocument()
+    })
+
+    it('updates config when the enabled toggle is clicked', () => {
+      mockAppStore.config.polish_enabled = true
+
+      render(<LlmPane />)
+      fireEvent.click(selectedTextSwitch())
+
+      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ selected_text_enabled: true })
+    })
+
+    it('describes the behavior only once the feature is on', () => {
+      mockAppStore.config.polish_enabled = true
+      mockAppStore.config.selected_text_enabled = false
+
+      const { unmount } = render(<LlmPane />)
+      expect(
+        screen.queryByText('Speak an instruction to rewrite the selection'),
+      ).not.toBeInTheDocument()
+      unmount()
+
+      mockAppStore.config.selected_text_enabled = true
+      render(<LlmPane />)
+      expect(screen.getByText('Speak an instruction to rewrite the selection')).toBeInTheDocument()
     })
   })
 })

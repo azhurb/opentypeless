@@ -75,25 +75,30 @@ unsafe fn cf_string_to_rust(cf: *mut c_void) -> Option<String> {
     String::from_utf8(buf).ok()
 }
 
-/// Read the focused element's role (skip if secure) and value. Returns Some((value, is_secure))
-/// on success — when `is_secure`, value is empty.
-fn read_focused_value() -> Option<(String, bool)> {
+/// Read `attribute` (a NUL-terminated AX attribute name) off the system-wide
+/// focused element, checking its role first. Returns Some((value, is_secure)) on
+/// success — when `is_secure`, value is empty and the attribute is never read.
+///
+/// Generic in the attribute because every read shares the same ~40 lines of
+/// system-wide-element setup, secure-field guard, and `CFRelease` bookkeeping,
+/// and a second hand-written copy of that is a leak waiting to happen.
+fn read_focused_attribute(attribute: &[u8]) -> Option<(String, bool)> {
     unsafe {
         if !crate::pipeline::is_accessibility_trusted() {
             return None;
         }
         let attr_focused = cfstr(b"AXFocusedUIElement\0");
         let attr_role = cfstr(b"AXRole\0");
-        let attr_value = cfstr(b"AXValue\0");
-        if attr_focused.is_null() || attr_role.is_null() || attr_value.is_null() {
+        let attr_wanted = cfstr(attribute);
+        if attr_focused.is_null() || attr_role.is_null() || attr_wanted.is_null() {
             if !attr_focused.is_null() {
                 CFRelease(attr_focused);
             }
             if !attr_role.is_null() {
                 CFRelease(attr_role);
             }
-            if !attr_value.is_null() {
-                CFRelease(attr_value);
+            if !attr_wanted.is_null() {
+                CFRelease(attr_wanted);
             }
             return None;
         }
@@ -102,7 +107,7 @@ fn read_focused_value() -> Option<(String, bool)> {
         if system_wide.is_null() {
             CFRelease(attr_focused);
             CFRelease(attr_role);
-            CFRelease(attr_value);
+            CFRelease(attr_wanted);
             return None;
         }
 
@@ -111,7 +116,7 @@ fn read_focused_value() -> Option<(String, bool)> {
         if err != 0 || focused.is_null() {
             CFRelease(attr_focused);
             CFRelease(attr_role);
-            CFRelease(attr_value);
+            CFRelease(attr_wanted);
             CFRelease(system_wide);
             return None;
         }
@@ -134,12 +139,12 @@ fn read_focused_value() -> Option<(String, bool)> {
             CFRelease(system_wide);
             CFRelease(attr_focused);
             CFRelease(attr_role);
-            CFRelease(attr_value);
+            CFRelease(attr_wanted);
             return Some((String::new(), true));
         }
 
         let mut value_ref: *mut c_void = ptr::null_mut();
-        let err2 = AXUIElementCopyAttributeValue(focused, attr_value, &mut value_ref);
+        let err2 = AXUIElementCopyAttributeValue(focused, attr_wanted, &mut value_ref);
         let value = if err2 == 0 && !value_ref.is_null() {
             cf_string_to_rust(value_ref)
         } else {
@@ -152,9 +157,35 @@ fn read_focused_value() -> Option<(String, bool)> {
         CFRelease(system_wide);
         CFRelease(attr_focused);
         CFRelease(attr_role);
-        CFRelease(attr_value);
+        CFRelease(attr_wanted);
         value.map(|v| (v, false))
     }
+}
+
+/// The text currently selected in the focused element, or `None` when there is
+/// no selection, the field is secure, Accessibility can't see the element, or
+/// Accessibility isn't granted.
+///
+/// Read-only — no keystroke, no clipboard write — which is what lets the pipeline
+/// run it at record start while the hotkey is still physically held, where a
+/// Cmd+C would collide with the held modifiers.
+///
+/// `None` is deliberately ambiguous: it means "nothing usable here", *not* "the
+/// user has nothing selected". Browser web content and Electron apps are
+/// invisible to Accessibility, so a caller must keep the clipboard fallback
+/// rather than treating `None` as an answer.
+pub fn focused_selected_text() -> Option<String> {
+    let (selected, is_secure) = read_focused_attribute(b"AXSelectedText\0")?;
+    if is_secure {
+        return None;
+    }
+    // An element with no selection reports an empty string rather than omitting
+    // the attribute, and a stray selected newline is not an edit target.
+    if selected.trim().is_empty() {
+        return None;
+    }
+    tracing::debug!("AX selected text: len={}", selected.len());
+    Some(selected)
 }
 
 /// AX roles that can receive pasted text. A focused element with one of these
@@ -237,7 +268,7 @@ pub fn focused_editable_present() -> bool {
 
 impl FocusedField for MacOsFocusedField {
     fn snapshot(&self, typed_text: &str) -> Option<FieldSnapshot> {
-        let (value, is_secure) = read_focused_value()?;
+        let (value, is_secure) = read_focused_attribute(b"AXValue\0")?;
         if is_secure {
             return Some(FieldSnapshot {
                 value: String::new(),
@@ -264,7 +295,7 @@ impl FocusedField for MacOsFocusedField {
     }
 
     fn current(&self, _baseline: &FieldSnapshot) -> Option<FieldSnapshot> {
-        let (value, is_secure) = read_focused_value()?;
+        let (value, is_secure) = read_focused_attribute(b"AXValue\0")?;
         if is_secure {
             return None;
         }

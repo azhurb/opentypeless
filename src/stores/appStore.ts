@@ -172,6 +172,18 @@ interface AppState {
   clipboardTip: boolean
   setClipboardTip: (show: boolean) => void
 
+  // This dictation will replace the user's selection rather than insert text.
+  // Drives the capsule's mode ring for the whole run. Set from
+  // `pipeline:editing_selection`, which fires at record start when Accessibility
+  // can see the selection and at stop when only the clipboard capture could.
+  editingSelection: boolean
+  setEditingSelection: (editing: boolean) => void
+
+  // Post-edit confirmation carrying the undo shortcut — replacing a selection is
+  // destructive in a way inserting text isn't, so it gets an explicit receipt.
+  editedTip: boolean
+  setEditedTip: (show: boolean) => void
+
   // Correction suggestion (learn from corrections toast)
   correctionSuggestion: CorrectionSuggestion | null
   setCorrectionSuggestion: (s: CorrectionSuggestion | null) => void
@@ -293,6 +305,12 @@ export const useAppStore = create<AppState>((set) => ({
 
   clipboardTip: false,
   setClipboardTip: (clipboardTip) => set({ clipboardTip }),
+
+  editingSelection: false,
+  setEditingSelection: (editingSelection) => set({ editingSelection }),
+
+  editedTip: false,
+  setEditedTip: (editedTip) => set({ editedTip }),
 
   correctionSuggestion: null,
   setCorrectionSuggestion: (correctionSuggestion) => set({ correctionSuggestion }),
