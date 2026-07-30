@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
-## [Unreleased]
+## [0.7.0] - 2026-07-30
 
 ### Added
 - **Editing selected text by voice now tells you what it's doing.** The feature previously ran completely silently: nothing indicated that a selection had been picked up, nothing distinguished "inserted your dictation" from "rewrote your paragraph", and the only way to find out which had happened was to look at the document. Three changes. On macOS the app now reads your selection through Accessibility *at the moment recording starts* instead of copying it after you let go, so the capsule takes an amber ring while you are still speaking — and where Accessibility can read the field, the Cmd+C is skipped entirely, along with the modifier-release delay and clipboard round-trip it needed. Where Accessibility can't see the selection — browser web content, Electron apps, and every non-macOS platform — the clipboard capture still runs, so the feature works, but there is no ring: the selection is only readable after you let go of the hotkey, and a warning that arrives once you have finished speaking is not a warning. Those targets get the confirmation tip instead. The fallback isn't going away, because "Accessibility returned nothing" and "you have nothing selected" are indistinguishable. After a successful edit the capsule shows "Edited — press ⌘Z to undo" for three seconds: replacing a selection is the one thing dictation does that destroys text you already had, so it gets a receipt rather than the silent checkmark an insertion gets. And the Settings toggle, renamed to "Edit selected text by voice" with a description of what actually happens, is now disabled while AI Polish is off instead of being enableable into a setting that does nothing.
@@ -20,7 +20,7 @@ This repository is a fork of [Tover0314/opentypeless](https://github.com/tover03
 - Text that replaces a selection no longer gains the trailing space that separates consecutive dictations. The paste has to occupy the selected range exactly, so an appended space nudged the following word out of place on every edit.
 - Selected text is no longer captured when AI Polish is off. Nothing reads it in that case, so the Cmd+C only cost latency and churned your clipboard to produce something that was immediately discarded.
 
-**These want one real dictation to confirm** — the crash was a main-thread assertion inside a system framework, which no test can stand in for.
+**Checked by hand before release**, because the crash was a main-thread assertion inside a system framework and no test can stand in for one: twenty-plus dictations across apps whose text Accessibility can read and apps where it cannot, producing no crash report; selections captured on both paths; the amber ring, the confirmation tip and the undo shortcut each confirmed in a running build.
 
 ## [0.6.0] - 2026-07-26
 
