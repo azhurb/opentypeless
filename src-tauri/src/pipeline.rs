@@ -199,6 +199,11 @@ fn empty_transcript_message(stt_error: Option<String>) -> String {
     stt_error.unwrap_or_else(|| "No speech detected".to_string())
 }
 
+/// How long `start()` waits for the Accessibility selection preflight before
+/// giving up on it. Generous against the ~244 ms mean measured for a healthy app,
+/// and far under the 4 s of audio the capture channel can hold unattended.
+const SELECTION_PREFLIGHT_TIMEOUT_MS: u64 = 500;
+
 /// Delay before capturing selected text to ensure hotkey modifiers are released.
 const SELECTED_TEXT_CAPTURE_DELAY_MS: u64 = 60;
 /// Delay after simulating Ctrl+C to let the clipboard update.
@@ -609,11 +614,36 @@ impl PipelineHandle {
         // the hotkey still held. When it finds nothing, stop() still runs the
         // clipboard capture: AX is blind to browser web content and Electron, so
         // `None` here does not mean the user has nothing selected.
+        //
+        // Blocking FFI, so it goes to the blocking pool rather than stalling a runtime
+        // worker, and the wait is bounded: audio is already recording into a 4-second
+        // channel that nothing drains until the forwarder task starts at the end of
+        // this function, so a slow app here costs the user the start of their sentence.
+        // Losing the preflight only costs the mode ring — the fallback still runs.
         let editing_selection = if should_capture_selection(
             config_data.selected_text_enabled,
             config_data.polish_enabled,
         ) {
-            let preloaded = crate::correction::focused_selected_text();
+            let preloaded = match tokio::time::timeout(
+                std::time::Duration::from_millis(SELECTION_PREFLIGHT_TIMEOUT_MS),
+                tokio::task::spawn_blocking(crate::correction::focused_selected_text),
+            )
+            .await
+            {
+                Ok(Ok(selection)) => selection,
+                Ok(Err(e)) => {
+                    tracing::error!("Selected-text AX preflight panicked: {}", e);
+                    None
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Selected-text AX preflight exceeded {}ms — continuing without it; \
+                         the clipboard fallback in stop() still applies",
+                        SELECTION_PREFLIGHT_TIMEOUT_MS
+                    );
+                    None
+                }
+            };
             let found = preloaded.is_some();
             tracing::info!(
                 "Selected-text AX preflight: found={}, len={}",

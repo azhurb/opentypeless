@@ -13,6 +13,7 @@ extern "C" {
         attribute: *mut c_void,
         out_value: *mut *mut c_void,
     ) -> i32;
+    fn AXUIElementSetMessagingTimeout(element: *mut c_void, timeout_seconds: f32) -> i32;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -29,6 +30,20 @@ extern "C" {
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x08000100;
 const AX_SECURE_TEXT_FIELD: &str = "AXSecureTextField";
+
+/// How long an AX read may wait on the target app before giving up.
+///
+/// Every read here asks a focused text field for its value, which is a
+/// milliseconds-scale question when the app is healthy. Without a timeout it is
+/// bounded only by the system default, and an app that is busy or wedged makes the
+/// read hang for as long as that default allows — with the whole `start()` sequence
+/// waiting behind it while audio piles into a 4-second buffer. Better to lose the
+/// preflight (the Cmd+C fallback still runs) than the start of the dictation.
+///
+/// Applied to the system-wide element, which per Apple's documentation sets the
+/// default for the whole process — deliberately, since the correction watcher reads
+/// the same way and should not hang either.
+const AX_MESSAGING_TIMEOUT_SECS: f32 = 0.4;
 
 // The AX attribute extern statics (kAXFocusedUIElementAttribute, kAXValueAttribute,
 // kAXRoleAttribute) live in the HIServices subframework and aren't visible to the
@@ -110,6 +125,9 @@ fn read_focused_attribute(attribute: &[u8]) -> Option<(String, bool)> {
             CFRelease(attr_wanted);
             return None;
         }
+        // Set before the first read, not once at startup: there is no init hook in
+        // this module and the call is cheap next to the read it bounds.
+        AXUIElementSetMessagingTimeout(system_wide, AX_MESSAGING_TIMEOUT_SECS);
 
         let mut focused: *mut c_void = ptr::null_mut();
         let err = AXUIElementCopyAttributeValue(system_wide, attr_focused, &mut focused);
