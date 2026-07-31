@@ -1,5 +1,6 @@
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -30,6 +31,14 @@ impl Default for AudioConfig {
 /// ~24 MB of i16 samples ≈ 12.5 min at 16kHz mono, matching the STT provider limits.
 const MAX_BUFFER_SAMPLES: usize = 12 * 1024 * 1024;
 
+/// Chunks the capture thread may queue ahead of the STT forwarder.
+///
+/// At the default 20 ms chunk this is 4 s of speech, and it is genuinely unattended
+/// for part of that: capture starts before the rest of `pipeline::start()` runs, and
+/// nothing drains the channel until the forwarder task is spawned at the end of it.
+/// Past this point chunks are dropped and the words in them are gone.
+const CHANNEL_CHUNK_CAPACITY: usize = 200;
+
 /// Handle to control audio capture running on a dedicated thread.
 /// This is Send + Sync safe because it only holds channels and atomic state.
 pub struct AudioCaptureHandle {
@@ -41,7 +50,7 @@ pub struct AudioCaptureHandle {
 impl AudioCaptureHandle {
     /// Start audio capture on a dedicated thread. Returns a handle and a receiver for audio chunks.
     pub fn start(config: AudioConfig) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
-        let (audio_tx, audio_rx) = mpsc::channel::<Vec<u8>>(200);
+        let (audio_tx, audio_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CHUNK_CAPACITY);
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
         let volume = Arc::new(Mutex::new(0.0f32));
         let state = Arc::new(Mutex::new(CaptureState::Recording));
@@ -150,8 +159,11 @@ fn run_capture(
 
     let target_rate = config.sample_rate;
     let target_channels = config.channels;
+    let chunk_duration_ms = config.chunk_duration_ms;
     let samples_per_chunk = (target_rate * config.chunk_duration_ms / 1000) as usize;
     let buffer: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::with_capacity(samples_per_chunk)));
+    let dropped_chunks = Arc::new(AtomicUsize::new(0));
+    let dropped_in_callback = dropped_chunks.clone();
 
     let stream = device.build_input_stream(
         &stream_config,
@@ -186,11 +198,16 @@ fn run_capture(
                 buf.push(s);
             }
 
-            // Send complete chunks
+            // Send complete chunks. A full channel means the chunk — and the speech in
+            // it — is gone; count it rather than logging, because this is the realtime
+            // audio callback and `tracing` here would allocate and take locks on the
+            // thread that must never block. `run_capture` reports the total on stop.
             while buf.len() >= samples_per_chunk {
                 let chunk: Vec<i16> = buf.drain(..samples_per_chunk).collect();
                 let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
-                let _ = sender.try_send(bytes);
+                if sender.try_send(bytes).is_err() {
+                    dropped_in_callback.fetch_add(1, Ordering::Relaxed);
+                }
             }
         },
         |err| {
@@ -215,6 +232,20 @@ fn run_capture(
     // Stream is dropped here, stopping capture
     drop(stream);
     *state.lock().unwrap_or_else(|e| e.into_inner()) = CaptureState::Idle;
+
+    // Speech that never reached the STT. Silent until now, which made a truncated or
+    // empty transcript look like the user hadn't spoken — and left nothing in the log
+    // to contradict that. Warn, because the audio is unrecoverable by this point.
+    let lost = dropped_chunks.load(Ordering::Relaxed);
+    if lost > 0 {
+        tracing::warn!(
+            "Audio capture dropped {} chunks (~{} ms of speech): the {}-chunk channel \
+             filled because nothing was reading it. The transcript is incomplete.",
+            lost,
+            lost as u32 * chunk_duration_ms,
+            CHANNEL_CHUNK_CAPACITY
+        );
+    }
     tracing::info!("Audio capture stopped");
     Ok(())
 }
