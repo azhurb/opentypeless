@@ -1,5 +1,6 @@
 pub mod openai;
 pub mod prompt;
+pub mod think;
 
 use anyhow::Result;
 use async_trait::async_trait;

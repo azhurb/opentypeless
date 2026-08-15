@@ -30,6 +30,7 @@ vi.mock('react-i18next', () => ({
         'settings.selectedTextEditing': 'Edit selected text by voice',
         'settings.selectedTextEditingDesc': 'Speak an instruction to rewrite the selection',
         'settings.selectedTextEditingRequiresPolish': 'Requires AI Polish',
+        'settings.selectedTextEditingMacOnly': 'macOS only',
         'settings.targetLanguage': 'Target Language',
       }
       return translations[key] || key
@@ -71,8 +72,18 @@ vi.mock('../../../stores/appStore', () => ({
   },
 }))
 
+/// Selected-text editing is macOS-only, so the default for this suite is macOS.
+/// The one test that covers the other platforms overrides it.
+function setPlatform(platform: string) {
+  Object.defineProperty(window.navigator, 'platform', {
+    value: platform,
+    configurable: true,
+  })
+}
+
 describe('LlmPane', () => {
   beforeEach(() => {
+    setPlatform('MacIntel')
     // Reset mock store state
     mockAppStore.config = {
       llm_provider: 'openai',
@@ -356,6 +367,21 @@ describe('LlmPane', () => {
       mockAppStore.config.selected_text_enabled = true
       render(<LlmPane />)
       expect(screen.getByText('Speak an instruction to rewrite the selection')).toBeInTheDocument()
+    })
+
+    /// Reading the selection needs macOS Accessibility, and the Ctrl+C capture
+    /// that used to stand in for it elsewhere was removed for treating any
+    /// clipboard change as a selection. Leaving the toggle live off macOS would
+    /// offer a switch that can never do anything.
+    it('disables the toggle off macOS and says why', () => {
+      setPlatform('Win32')
+      mockAppStore.config.polish_enabled = true
+
+      render(<LlmPane />)
+
+      expect(selectedTextSwitch()).toBeDisabled()
+      expect(screen.getByText('macOS only')).toBeInTheDocument()
+      expect(screen.queryByText('Requires AI Polish')).not.toBeInTheDocument()
     })
   })
 })

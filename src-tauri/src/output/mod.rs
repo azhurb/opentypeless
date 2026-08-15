@@ -35,17 +35,6 @@ pub async fn paste_text(
     clipboard::paste(app_handle, text, app, editable).await
 }
 
-/// Synthesize the copy shortcut (Cmd+C, Ctrl+C off macOS) into the focused app.
-///
-/// Used by selected-text capture to pull the foreground selection onto the
-/// clipboard. Like [`paste_text`], the macOS keystroke is marshalled onto the
-/// main thread — HIToolbox aborts the process when touched from a worker thread.
-/// Blocking, so call it from a blocking context (`spawn_blocking` /
-/// `block_in_place`), never from the main thread.
-pub fn copy_selection(app_handle: &AppHandle) -> Result<()> {
-    clipboard::invoke_copy(app_handle)
-}
-
 /// True when the foreground app is a terminal emulator or an editor/IDE that
 /// hosts an integrated terminal — contexts whose keyboard focus macOS
 /// Accessibility reports unreliably. The no-target paste tip is suppressed for

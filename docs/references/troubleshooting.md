@@ -77,9 +77,10 @@ Check these in order:
 
 1. **Is AI Polish on?** Settings → LLM. The LLM is what applies the spoken instruction, so with polish off the setting does nothing at all. The toggle is disabled in that state and says so, but a config saved by an older version can still have the feature on with polish off — turn polish on and the gate clears.
 2. **Was the text still selected when you pressed the hotkey?** Clicking into another window to reach the capsule drops the selection in most apps. Use the hotkey, not the capsule, and keep focus where the text is.
-3. **Did the capsule show the amber ring?** In an app whose text Accessibility can read, no ring means nothing was captured and the dictation was inserted as ordinary text rather than treated as an instruction. **In a browser or an Electron app there is no ring even when it works** — the selection can only be read through the clipboard after you release the hotkey, too late for a warning to be worth anything. Look for the "Edited — press ⌘Z to undo" tip instead; that is the signal an edit happened. See [Pipeline → Selected-Text Capture](../architecture/pipeline.md#selected-text-capture).
-4. **Was what you said plausibly an instruction?** Dictating ordinary prose with something selected is treated as dictation, deliberately: the alternative is mangling a paragraph because you happened to have it highlighted.
-5. **Password fields are never read**, by design.
+3. **Did the capsule show the amber ring?** No ring means no selection was found and the dictation was inserted as ordinary text rather than treated as an instruction. The ring is now a complete signal, so this is decisive.
+4. **Which app is it?** Editing works only where macOS Accessibility can read the selection. Browsers (in web content) and Electron apps — Cursor, VS Code, Slack — do not expose it, so a dictation there is always inserted. This is a deliberate narrowing: the Cmd+C capture that used to cover them could not tell a real selection from an app copying the current line, and quietly rewrote text nobody had selected. See [Pipeline → Selected-Text Capture](../architecture/pipeline.md#selected-text-capture).
+5. **Was what you said plausibly an instruction?** Dictating ordinary prose with something selected is treated as dictation, deliberately: the alternative is mangling a paragraph because you happened to have it highlighted.
+6. **Password fields are never read**, by design.
 
 Nothing is lost when an edit fails: the selection is left untouched and the error is surfaced. The raw transcript is never pasted over selected text.
 
@@ -109,4 +110,4 @@ An `Edit` failure never costs you anything: the selection is left exactly as it 
 
 The Permissions step is skipped on Linux and Windows — neither needs per-app Microphone or Accessibility grants. If recording fails, check that the default input device is selected in the OS sound settings.
 
-Editing selected text by voice works on both, via a Ctrl+C capture rather than the macOS Accessibility read. The only difference is timing: the capsule's mode ring appears when the hotkey is released rather than at the start of recording.
+Editing selected text by voice is **macOS only**, and the Settings toggle is disabled on Windows and Linux. Reading the selection needs macOS Accessibility; the Ctrl+C capture that used to stand in for it was removed because it could not distinguish a real selection from an app copying the current line. Everything else — dictation, polish, translation, dictionary — works normally.

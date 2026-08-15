@@ -83,7 +83,27 @@ A single trailing space is appended to an **inserted** dictation (see [Pipeline]
 
 Output is always delivered via the system clipboard plus a synthesized Cmd+V (Ctrl+V on Windows/Linux). The user's prior clipboard contents are snapshotted and restored after the paste lands. For terminal-hosted CLIs that don't handle bulk pastes well (Claude CLI, Codex CLI, Gemini CLI) the paste is split into smaller chunks with brief inter-chunk delays — see [Pipeline → Output](../architecture/pipeline.md) for the chunking constants and the list of recognised terminal targets.
 
-For Gemini models (any model name containing `gemini`), the LLM request additionally sets `reasoning_effort: "none"` to keep thinking off — `gemini-flash-lite` already defaults to no thinking, but the explicit opt-out is defensive against any future model where it might engage. Other providers silently ignore this field.
+### Reasoning models
+
+Polishing one dictated sentence is a formatting job, not a reasoning one. A model that deliberates about comma placement costs latency in front of a user waiting for their text, tokens against a BYOK quota, and — if the scratchpad exhausts `max_tokens` — the answer itself. Measured on Groq's `qwen/qwen3.6-27b` for the input "One, two, three": 262 completion tokens with reasoning on, 7 with it off.
+
+Two layers keep it out.
+
+**1. Ask the model not to reason** (`llm::openai::reasoning_params`). Per-model request fields, gated narrowly on model ID and base URL. There is no "send it everywhere and let the others ignore it" option: Groq answers an unknown field with `property 'x' is unsupported` and a 400, and `reasoning_effort: "none"` is valid for Qwen3 but rejected by GPT-OSS, which takes only `low`/`medium`/`high`.
+
+| Model gate | Field sent | Verified |
+|---|---|---|
+| name contains `gemini` | `reasoning_effort: "none"` | probed |
+| name contains `qwen3` **and** Groq base URL | `reasoning_effort: "none"` | probed |
+| `deepseek-v4*` on DeepSeek | `thinking: {"type": "disabled"}` | vendor schema |
+| `kimi-k2.5` / `kimi-k2.6` on Moonshot | `thinking: {"type": "disabled"}` | vendor schema |
+| GLM 4.5 / 4.6 / 4.7 / 5.x | `thinking: {"type": "enabled"}`, `temperature: 1.0`, `top_p: 0.95` | existing behavior |
+
+GLM is the one model family this app turns thinking *on* for: left off, the API populates `reasoning_content` and leaves `content` empty, so the polish came back blank. That gate covers 4.5 and later only — GLM-4 predates the `thinking` field, and the shipped Zhipu default `glm-4-flash-250414` has no thinking mode to configure.
+
+**2. Strip whatever reasons anyway** (`llm::think`). When a provider is in "raw" reasoning mode the scratchpad arrives inside the ordinary `content` field wrapped in `<think>…</think>` — Groq's default for Qwen3, and the norm for DeepSeek-R1, GLM and local Ollama/OpenRouter reasoning models. This is the layer that has to hold for providers the table above has never heard of, and for a user who types any model name they like into Settings.
+
+The strip runs on the **stream**, not on the finished string: chunks are forwarded to the capsule as they arrive, so trimming at the end would be too late — the user has already watched the scratchpad appear. The filter therefore holds back any trailing text that could still grow into a tag (`<thi` may be one chunk away from `<think>`) and releases it as ordinary text when it turns out not to be. A response that is nothing but an unterminated block — `max_tokens` spent mid-thought — is reported as a failure rather than an empty string, so a dictation falls back to pasting the raw transcript and a selection is left untouched.
 
 Needs confirmation:
 
@@ -95,7 +115,7 @@ Off by default (`selected_text_enabled`). With it on, selecting text in any app 
 
 User-facing behavior:
 
-- **Mode indicator.** When the app knows *before the user speaks* that a selection was captured, the capsule pill takes an amber ring for the whole run. No size or layout change. That knowledge only exists on the Accessibility path, so the ring is deliberately **not** shown when the selection came from the clipboard fallback: by then the recording is over and an early warning arrives too late to warn anybody. Shown anyway, it lasted under a second before the edited tip took over the pill, which reads as a rendering glitch. Fallback targets rely on the confirmation tip instead, which carries the same amber.
+- **Mode indicator.** When the app knows *before the user speaks* that a selection was captured, the capsule pill takes an amber ring for the whole run. No size or layout change. Because the Accessibility read is the only way into edit mode, the ring is a complete signal: no ring means this dictation will be inserted as ordinary text.
 - **Confirmation.** After a successful replacement the capsule shows "Edited — press ⌘Z to undo" for 3 s. Replacing a selection is the one output path that destroys something the user already had, so it gets an explicit receipt with the undo shortcut.
 - **Failure is non-destructive.** If the LLM call fails, the selection is left untouched and the error is surfaced. The raw transcript is never pasted over selected text.
 - **Requires AI Polish**, since the LLM is what applies the instruction. The Settings toggle is disabled with a hint when polish is off, and the pipeline enforces the same rule independently.
@@ -106,7 +126,8 @@ Platform matrix:
 | | Selection capture | Ring appears |
 |---|---|---|
 | macOS, Accessibility can read the field | Accessibility preflight, no keystroke | At record start |
-| macOS, Accessibility blind (browser web content, Electron) | Cmd+C fallback | No ring — confirmation tip only |
+| macOS, Accessibility blind (browser web content, Electron) | Not supported — dictation is inserted | No ring |
+| Windows, Linux | Not supported — the toggle is disabled | No ring |
 | Windows / Linux | Ctrl+C fallback | No ring — confirmation tip only |
 
 Mechanism: [Pipeline → Selected-Text Capture](../architecture/pipeline.md#selected-text-capture).

@@ -41,12 +41,12 @@ fn normalize_for_output(text: &str, replaced_selection: bool) -> String {
     }
 }
 
-/// Whether this run should try to capture the foreground selection.
+/// Whether this run should look for a foreground selection to edit.
 ///
-/// Gated on polish as well as the setting, because the captured selection is only
-/// ever read by the LLM request: with polish off, capturing would cost latency and
-/// churn the user's clipboard to produce something nothing consumes. The Settings
-/// toggle is disabled in the same case, so this is the second of two layers.
+/// Gated on polish as well as the setting, because the selection is only ever
+/// read by the LLM request: with polish off, looking would cost latency to
+/// produce something nothing consumes. The Settings toggle is disabled in the
+/// same case, so this is the second of two layers.
 fn should_capture_selection(selected_text_enabled: bool, polish_enabled: bool) -> bool {
     selected_text_enabled && polish_enabled
 }
@@ -204,10 +204,6 @@ fn empty_transcript_message(stt_error: Option<String>) -> String {
 /// and far under the 4 s of audio the capture channel can hold unattended.
 const SELECTION_PREFLIGHT_TIMEOUT_MS: u64 = 500;
 
-/// Delay before capturing selected text to ensure hotkey modifiers are released.
-const SELECTED_TEXT_CAPTURE_DELAY_MS: u64 = 60;
-/// Delay after simulating Ctrl+C to let the clipboard update.
-const CLIPBOARD_COPY_SETTLE_MS: u64 = 100;
 /// Interval for polling audio volume during recording.
 const VOLUME_POLL_INTERVAL_MS: u64 = 50;
 /// Timeout for STT finalization after recording stops.
@@ -368,55 +364,6 @@ impl PipelineHandle {
 
         // Force state to Idle — emits pipeline:state event to sync frontend
         self.set_state(PipelineState::Idle);
-    }
-
-    /// Capture selected text from the foreground app by simulating Ctrl+C / Cmd+C.
-    /// The fallback for targets Accessibility can't read — see
-    /// [`crate::correction::focused_selected_text`] for the preferred path, which is
-    /// tried first at record start.
-    ///
-    /// Must be called when no hotkey modifier keys are physically held down.
-    /// Called from async context via block_in_place, so std::thread::sleep is acceptable.
-    fn capture_selected_text(&self) -> Option<String> {
-        let mut clipboard = arboard::Clipboard::new().ok()?;
-        let backup = clipboard.get_text().ok();
-
-        if let Err(e) = output::copy_selection(&self.app_handle) {
-            tracing::warn!("Selected-text copy keystroke failed: {:#}", e);
-            return None;
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_COPY_SETTLE_MS));
-
-        let selected = clipboard.get_text().ok();
-
-        // Always restore clipboard
-        if let Some(ref b) = backup {
-            let _ = clipboard.set_text(b);
-        }
-
-        tracing::info!(
-            "Selected text capture: backup_len={}, selected_len={}",
-            backup.as_deref().map(|s| s.len()).unwrap_or(0),
-            selected.as_deref().map(|s| s.len()).unwrap_or(0)
-        );
-
-        // On macOS, if Cmd+C had no effect (e.g., no Accessibility permission),
-        // the clipboard is unchanged, so selected == backup — return None to avoid
-        // passing stale clipboard content to the LLM as if it were selected text.
-        match &selected {
-            Some(s) if !s.trim().is_empty() => {
-                if backup.as_deref() == Some(s.as_str()) {
-                    tracing::debug!(
-                        "Selected text equals clipboard backup — Cmd+C had no effect, ignoring"
-                    );
-                    None
-                } else {
-                    Some(s.clone())
-                }
-            }
-            _ => None,
-        }
     }
 
     async fn load_config(&self) -> storage::AppConfig {
@@ -610,10 +557,23 @@ impl PipelineHandle {
         // slow STT connect — so the capsule can show the editing indicator while
         // the user is still speaking, rather than only after they let go.
         //
-        // This is a read-only AX query, so unlike the Cmd+C fallback it's safe with
-        // the hotkey still held. When it finds nothing, stop() still runs the
-        // clipboard capture: AX is blind to browser web content and Electron, so
-        // `None` here does not mean the user has nothing selected.
+        // This is the *only* way a run enters edit mode. It used to be the fast path
+        // in front of a Cmd+C fallback in `stop()` that ran whenever AX came back
+        // empty, and that fallback was wrong in a way no amount of tuning fixed: it
+        // read "the clipboard changed" as "the user selected something to edit". In
+        // an editor with VS Code's `editor.emptySelectionClipboard` default, Cmd+C
+        // with no selection copies the whole current line, so an ordinary dictation
+        // silently became an instruction to rewrite that line — and because the
+        // capsule deliberately shows no ring for a selection discovered after the
+        // user has already spoken, there was nothing on screen to say so. Losing an
+        // edit is recoverable; silently rewriting text the user did not select is
+        // not, so the ambiguous signal is gone rather than merely narrowed.
+        //
+        // The cost is real and deliberate: AX cannot see browser web content or
+        // Electron apps, so voice-editing does not work there. `docs/plans/active/
+        // selected-text-in-ax-blind-apps.md` covers the ways to win those back.
+        //
+        // A read-only AX query, so it is safe with the hotkey still held.
         //
         // Blocking FFI, so it goes to the blocking pool rather than stalling a runtime
         // worker, and the wait is bounded: audio is already recording into a 4-second
@@ -637,8 +597,8 @@ impl PipelineHandle {
                 }
                 Err(_) => {
                     tracing::warn!(
-                        "Selected-text AX preflight exceeded {}ms — continuing without it; \
-                         the clipboard fallback in stop() still applies",
+                        "Selected-text AX preflight exceeded {}ms — this dictation is \
+                         treated as plain insertion, not an edit",
                         SELECTION_PREFLIGHT_TIMEOUT_MS
                     );
                     None
@@ -886,55 +846,11 @@ impl PipelineHandle {
 
         let stop_start = std::time::Instant::now();
 
-        let config_data = self
-            .preloaded_config
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-            .unwrap_or_default();
-        // The Accessibility preflight in start() may already have the selection. When
-        // it does, skip the clipboard capture entirely — that saves the modifier-release
-        // delay, the keystroke, the clipboard settle, and the round-trip through the
-        // user's clipboard, all on the latency-critical path between releasing the
-        // hotkey and seeing text appear.
-        let preflighted = self
-            .preloaded_selected_text
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some();
-        if !preflighted
-            && should_capture_selection(
-                config_data.selected_text_enabled,
-                config_data.polish_enabled,
-            )
-        {
-            // Capture now — the hotkey is released so Cmd/Ctrl+C won't conflict with
-            // held modifiers. The small delay is what makes that true in toggle mode.
-            tokio::time::sleep(std::time::Duration::from_millis(
-                SELECTED_TEXT_CAPTURE_DELAY_MS,
-            ))
-            .await;
-            let selected_text = tokio::task::block_in_place(|| self.capture_selected_text());
-            tracing::info!(
-                "Selected-text clipboard fallback: len={}",
-                selected_text.as_deref().map(|s| s.len()).unwrap_or(0)
-            );
-            // Deliberately no `pipeline:editing_selection` here. The capsule's mode ring
-            // is an *early warning* — "what you are about to say will overwrite the text
-            // you selected" — and by this point the recording is already over, so the
-            // information has expired. Emitting it anyway made the ring appear for under
-            // a second between this capture and the edited tip taking over the pill,
-            // which reads as a rendering glitch rather than a mode. Measured at 882 ms on
-            // one run; the whole `stop()` averages ~1 s.
-            //
-            // So the ring now means exactly one thing: the Accessibility preflight saw
-            // your selection before you spoke. Targets AX can't read get no ring and rely
-            // on the "Edited — ⌘Z to undo" tip afterwards, which carries the same amber.
-            *self
-                .preloaded_selected_text
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = selected_text;
-        }
+        // Nothing reads the selection here any more. It was captured by the
+        // Accessibility preflight in `start()`, before the user spoke, which is
+        // the only signal this app now accepts as "edit the selection" — see the
+        // comment there for why the Cmd+C fallback that used to live at this
+        // point was removed rather than narrowed.
 
         // Stop audio capture (this drops the channel, signaling STT task to stop)
         {
