@@ -3,7 +3,11 @@
 # words — "4c7caf5" contains "caf", and dead/beef/fade/added are all valid hex.
 # Ignoring backtick-quoted hex runs fixes the whole class instead of
 # allowlisting each accident as it appears.
-extend-ignore-re = ["`[0-9a-f]{7,40}`"]
+#
+# The `<think>` stream filter (`src-tauri/src/llm/think.rs`) is all about tags
+# arriving split across chunk boundaries, so its tests and docs deliberately
+# contain truncated fragments — `<thi`, `"thi"` — which typos reads as "the".
+extend-ignore-re = ["`[0-9a-f]{7,40}`", "<thi\\b", "\"thi\""]
 
 [default.extend-words]
 # Allow these "words" that typos might flag

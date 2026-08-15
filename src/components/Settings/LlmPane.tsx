@@ -8,7 +8,19 @@ import { FormField } from './shared/FormField'
 import { Toggle } from './shared/Toggle'
 import { CheckCircle2, XCircle, Loader2, RefreshCw } from 'lucide-react'
 
+// Selected-text editing reads the selection through macOS Accessibility, and
+// only through it. The Ctrl+C capture that used to serve the other platforms was
+// removed: it could not tell "the user selected this" from "the app put
+// something on the clipboard", which silently turned ordinary dictations into
+// rewrites. Until a non-macOS signal exists the toggle would be a no-op here, so
+// it is disabled for the same reason it is disabled when polish is off.
+// Read per render rather than once at import so both branches stay reachable
+// from tests; the value itself never changes at runtime.
+const isMacPlatform = () =>
+  typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC')
+
 export function LlmPane() {
+  const isMac = isMacPlatform()
   const config = useAppStore((s) => s.config)
   const updateConfig = useAppStore((s) => s.updateConfig)
   const llmTestStatus = useAppStore((s) => s.llmTestStatus)
@@ -232,14 +244,20 @@ export function LlmPane() {
         />
         {/* Only the LLM request ever reads the captured selection, so with polish
             off this setting is a silent no-op — hence disabled rather than merely
-            documented. The pipeline enforces the same rule independently. */}
+            documented. The pipeline enforces the same rule independently. Off
+            macOS there is no way to read the selection at all, so the same
+            reasoning disables it there. */}
         <Toggle
           checked={config.selected_text_enabled}
           onChange={(checked) => updateConfig({ selected_text_enabled: checked })}
           label={t('settings.selectedTextEditing')}
-          disabled={!config.polish_enabled}
+          disabled={!config.polish_enabled || !isMac}
         />
-        {!config.polish_enabled ? (
+        {!isMac ? (
+          <p className="text-[11px] text-text-tertiary -mt-1 ml-[52px]">
+            {t('settings.selectedTextEditingMacOnly')}
+          </p>
+        ) : !config.polish_enabled ? (
           <p className="text-[11px] text-text-tertiary -mt-1 ml-[52px]">
             {t('settings.selectedTextEditingRequiresPolish')}
           </p>

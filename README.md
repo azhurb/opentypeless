@@ -61,7 +61,7 @@
 - 🤖 Text polishing via multiple LLMs: OpenAI, DeepSeek, Claude, Gemini, Ollama, and more
 - ⚡ Live progress — the capsule shows the polish forming as the LLM works, then pastes once it's done
 - ⌨️ Lands in whatever app is focused, via the clipboard plus a synthesized ⌘V / Ctrl+V — split into chunks for terminal CLIs that choke on bulk pastes
-- ✏️ Edit selected text by voice — select a paragraph, say "fix the grammar" or "make this shorter", and the selection is rewritten in place (requires AI Polish)
+- ✏️ Edit selected text by voice — select a paragraph, say "fix the grammar" or "make this shorter", and the selection is rewritten in place (macOS only, requires AI Polish; browsers and Electron apps do not expose their selection)
 - 🌐 Translation mode: speak in one language, output in another (20+ languages)
 - 📖 Custom dictionary for domain-specific terms
 - 🔍 Per-app detection to adapt formatting
