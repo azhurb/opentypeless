@@ -1,100 +1,95 @@
-# Selected-Text Editing In Accessibility-Blind Apps
+# Selected-Text Editing Where Accessibility Cannot Reach
 
-Opened 2026-08-15, when the Cmd+C fallback was removed. Records what coverage was
-given up, why narrowing the old approach was rejected, and the options for
-winning the lost targets back.
+Opened 2026-08-15 when the Cmd+C fallback was removed. **Substantially rewritten
+2026-08-24**: the premise it was built on turned out to be wrong, and most of the
+coverage it mourned was never actually lost to the platform.
 
-## What changed
+## What the original version got wrong
 
-Edit-selected-text-by-voice now requires the macOS Accessibility preflight in
-`pipeline::start`. The `Cmd`/`Ctrl+C` capture that used to run in `stop()`
-whenever the preflight came up empty is gone. Mechanism and reasoning:
+It recorded that Accessibility cannot see browser web content or Electron apps,
+and listed three ways to win those targets back. Measured on macOS 26
+(Darwin 25.5), that framing was incorrect in both directions:
+
+- **The system-wide element answers nothing at all.**
+  `AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute)`
+  returns `kAXErrorCannotComplete` (-25204) in 0 ms — a refusal, not a timeout —
+  for every app tried, TextEdit included. Native apps only *appeared* to work
+  because the Cmd+C fallback was covering for a read that had already failed.
+  Removing the fallback in 0.8.0 exposed a breakage that had been there all
+  along, and it was misreported as a deliberate narrowing.
+- **Chromium is not blind.** Asking the frontmost application's own element
+  (`AXUIElementCreateApplication(pid)`) reads a Gmail draft in Chrome in ~31 ms:
+  `role=AXTextArea`, `AXSelectedText="Test gmail selection."`. Browser text
+  fields work. So does anything served through them, including Slack on
+  `app.slack.com`.
+- **`AXManualAccessibility` is neither needed nor supported.** Chrome answered
+  `kAXErrorAttributeUnsupported` (-25205) when we tried to set it, and read the
+  selection fine without it. The "enable Chromium's a11y tree" route in the
+  original version was solving a problem that does not exist.
+
+The fix was `focus_root` in `correction::ax_macos`. See
 [Pipeline → Selected-Text Capture](../../architecture/pipeline.md#selected-text-capture).
 
-## What it cost
+## What is actually still missing
 
-| Target | Before | Now |
+| Target | Status | Why |
 | --- | --- | --- |
-| macOS native apps (`AXTextField`, `AXTextArea`, …) | Works, with ring | Works, with ring |
-| Browser web content (Chrome, Safari) | Worked via Cmd+C, no ring | Not supported |
-| Electron apps (Cursor, VS Code, Slack) | Worked via Cmd+C, no ring | Not supported |
-| Windows, Linux | Worked via Ctrl+C, no ring | Not supported; toggle disabled |
+| Native macOS apps | Works | `AXSelectedText` off the frontmost app element |
+| Browser text fields (Chrome, Safari), incl. `app.slack.com` | Works | Chromium exposes the input's selection |
+| Slack desktop app | **Unverified** | Electron, so expected to behave like Chrome, but never measured — not installed on the test machine |
+| VS Code, Cursor | Does not work | Monaco answers `kAXErrorNoValue` (-25212) promptly: it publishes no focused element until it detects a screen reader |
+| Static web page text (not a form field) | **Unverified** | Chromium exposes this as `AXSelectedTextMarkerRange`, not `AXSelectedText`, so it likely needs separate handling |
+| Windows, Linux | Does not work | `correction::ax_stub` has no implementation; the Settings toggle is disabled there |
 
-## Why the fallback was removed rather than fixed
+## Open work, cheapest first
 
-The fallback read "the clipboard changed after we sent Cmd+C" as "the user
-selected text to edit". That inference does not hold:
+### 1. Measure the two unverified rows
 
-- VS Code and its forks ship `editor.emptySelectionClipboard: true`, so Cmd+C
-  with **no selection** copies the whole current line. JetBrains IDEs match. Both
-  are Electron or otherwise AX-blind, so they hit the fallback on every dictation.
-- A wrong answer switched the request to `SELECTED_TEXT_PROMPT`, which permits
-  rewriting, reordering and tone changes — the inverse of the dictation prompt's
-  "minimal edits, do not rephrase".
-- The mode ring is suppressed for a selection discovered after the user has
-  spoken (an early warning that arrives late is not a warning), so there was no
-  signal that a different mode had engaged.
+Both are a probe away and neither needs new code. The Slack desktop app matters
+because it is the app most often asked about; the marker-range case matters
+because "select a paragraph on a web page and reword it" is a plausible thing to
+want, and it is the one browser case we know `AXSelectedText` will not cover.
 
-Narrowing was considered and rejected:
+### 2. Static web text via `AXSelectedTextMarkerRange`
 
-- **Sentinel-clear the clipboard before the copy.** Detects "the copy did
-  nothing" reliably, which the old `selected == backup` compare got wrong in both
-  directions. Does not detect "the app copied something the user did not select",
-  which is the actual failure.
-- **Reject whole-line artifacts** (single line, trailing newline). A heuristic
-  that a genuine one-line selection defeats, and that misses multi-line cases.
-- **Lean harder on the prompt's plain-dictation fallback rule.** Already present
-  as rule 5 of `SELECTED_TEXT_PROMPT`; the small, fast models this app targets
-  apply it unreliably, which is how the bug was noticed.
+If the row above confirms it, reading a page-text selection means the
+parameterized marker-range attributes rather than the plain string one. Larger
+than it sounds: marker ranges are opaque and need
+`AXStringForTextMarkerRange` to resolve, and writing the result back is a
+different problem again, since a web page selection is usually not editable.
+Read-only uses (translate, summarize into the clipboard) may be the only sane
+scope.
 
-Losing an edit is recoverable. Silently rewriting text the user did not select is
-not, so the ambiguous signal was removed rather than tuned.
+### 3. Monaco-based editors
 
-## Options for winning the targets back
+VS Code and Cursor gate accessibility behind screen-reader detection.
+`editor.accessibilitySupport: "on"` makes the editor expose its content, but
+that is a user-side setting we cannot set for them and it changes the editor's
+own behaviour. The honest options are to document it, or to detect the editor
+and tell the user why the ring never appears there.
 
-Roughly cheapest first. None is scheduled.
-
-### 1. Explicit edit hotkey
-
-A second hotkey that means "this dictation edits my selection". Edit mode becomes
-a user decision instead of an inference, so the Cmd+C capture becomes sound again
-— the user has asserted there is a selection, and copying it is no longer a
-guess. Works everywhere, including Windows and Linux.
-
-Cost: a second global hotkey registration and its conflict handling, a Settings
-field, onboarding copy, and a capsule state that distinguishes the two modes.
-
-Note the removed `output::copy_selection` / `clipboard::invoke_copy` machinery is
-what this would need back; it is in git history at the commit that removed it,
-including the main-thread dispatch and the layout-independent keycode handling
-that took two bugs to get right.
-
-### 2. Read the Edit ▸ Copy menu item's enabled state
-
-macOS apps expose their menu bar through Accessibility even when their content is
-opaque to it, because the menu bar is native AppKit. An `AXMenuItem` for Copy that
-reports disabled is a strong "nothing is selected" signal, and one that reports
-enabled is a decent "something is". Read at record start, this restores the ring
-for Electron and browser targets and needs no keystroke at all.
-
-Unverified, and the risks are real: apps that never validate their menu items
-would report enabled always, Electron's menu implementation may not update
-`AXEnabled` promptly, and traversing to the item costs AX round-trips inside the
-500 ms preflight budget. Worth a spike against Cursor, Chrome and Slack before
-committing.
-
-### 3. Per-platform selection APIs
+### 4. Non-macOS
 
 Windows UI Automation (`TextPattern.GetSelection`) and AT-SPI on Linux are the
-structural equivalents of the macOS AX read. This is the only option that makes
-the feature work off macOS without a keystroke.
+structural equivalents, behind `correction::FocusedField`. Unchanged from the
+original version, and still the largest item here.
 
-Cost: two more platform backends behind `correction::FocusedField`, each with its
-own permission and reliability story. Largest of the three by a wide margin.
+## What is no longer on the list
 
-## If the decision needs revisiting
+- **An explicit edit hotkey.** Proposed when the alternative looked like
+  clipboard guessing. With the AX read working across native and browser
+  targets, a second hotkey buys only Monaco editors and non-macOS, at the cost
+  of a permanent second global shortcut. Not worth it on that basis alone.
+- **Reading the Edit ▸ Copy menu item's enabled state.** Same reasoning: it was
+  a way to infer "something is selected" without AX, and AX now answers.
+- **Reinstating the Cmd+C fallback.** Its own defect is unchanged and unrelated
+  to any of this: it read any clipboard change as a selection, and VS Code
+  copies the current line when nothing is selected. It should stay removed.
 
-The user-visible symptom that motivated this was: an ordinary dictation in Cursor
-came back as a rewrite of a line the user had not selected. Any replacement
-design has to make that impossible, not merely unlikely — the failure is silent
-and destroys text the user already had.
+## The rule this cost us
+
+The original version asserted a platform limitation from reading code comments
+rather than from measuring. It then shipped that assertion in release notes as a
+deliberate trade-off. Before recording that a platform cannot do something,
+measure it — a probe against a live app took minutes and reversed the
+conclusion.

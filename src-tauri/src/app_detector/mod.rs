@@ -34,6 +34,18 @@ impl Default for AppContext {
     }
 }
 
+/// The pid of the frontmost application, or `None` when there isn't one.
+///
+/// Split out from [`detect_current_app`] because the Accessibility reads in
+/// `correction::ax_macos` need only this, and one of them runs on every poll of
+/// the correction watcher — building the app name and bundle ID alongside it
+/// would be waste on that path.
+#[cfg(target_os = "macos")]
+pub fn frontmost_pid() -> Option<i32> {
+    let pid = macos_ffi::frontmost_app_info().2;
+    (pid > 0).then_some(pid)
+}
+
 pub fn detect_current_app() -> AppContext {
     #[cfg(target_os = "windows")]
     {
