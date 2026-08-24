@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
-## [Unreleased]
+## [0.8.1] - 2026-08-24
 
 ### Fixed
 - **A long dictation into a coding CLI arrived as `[Pasted text #1 +12 lines]` instead of your words.** Claude Code replaces any paste over 800 characters, or carrying more than two line breaks, with a collapsed placeholder. The app already splits pastes into pieces that stay under both limits, and the limits were right — the problem was that the splitting never ran. It only triggered when the CLI could be proven to be a child process of the terminal window in front of you, and that stopped being true the moment anything else owns the session: iTerm2 hands its shells to a background `iTermServer` so they survive a restart, [Herdr](https://herdr.dev) is built entirely around a runtime that owns the agent's pane so it outlives detach and reboots, and `tmux` and `screen` do the same. In all of those the CLI is running, plainly visible in the process table, just not parented to the window you are typing into — so the app fell back to sending one large paste, which is exactly the case that collapses.
