@@ -81,7 +81,7 @@ Selected-text prompt behavior includes:
 
 A single trailing space is appended to an **inserted** dictation (see [Pipeline](../architecture/pipeline.md)), so successive dictations don't glue together. Text that replaces a selection gets no trailing space: it has to occupy the selected range exactly.
 
-Output is always delivered via the system clipboard plus a synthesized Cmd+V (Ctrl+V on Windows/Linux). The user's prior clipboard contents are snapshotted and restored after the paste lands. For terminal-hosted CLIs that don't handle bulk pastes well (Claude CLI, Codex CLI, Gemini CLI) the paste is split into smaller chunks with brief inter-chunk delays — see [Pipeline → Output](../architecture/pipeline.md) for the chunking constants and the list of recognised terminal targets.
+Output is always delivered via the system clipboard plus a synthesized Cmd+V (Ctrl+V on Windows/Linux). The user's prior clipboard contents are snapshotted and restored after the paste lands. For terminal-hosted CLIs that don't handle bulk pastes well (Claude CLI, Codex CLI, Gemini CLI) the paste is split into smaller chunks with brief inter-chunk delays, which is what keeps a long dictation from arriving as a collapsed `[Pasted text #1 +12 lines]` placeholder instead of your words. The CLI is recognised by process, by window title, or — in a pure terminal — by a coding CLI simply running on the machine, which is what covers session daemons like Herdr, tmux and iTerm2's restored sessions. See [Pipeline → Output](../architecture/pipeline.md) for the constants and the full recognition order.
 
 ### Reasoning models
 
