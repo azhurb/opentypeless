@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
+## [Unreleased]
+
+### Fixed
+- **Editing selected text by voice was broken in every app, and the 0.8.0 notes blamed the wrong thing.** Reading your selection asked macOS for the *system-wide* focused element, and on macOS 26 that call refuses outright — `kAXErrorCannotComplete`, returned in 0 ms, for every application tried including TextEdit. It had presumably been failing for a long time without showing: until 0.8.0 the `Cmd+C` fallback quietly covered for it, so native apps appeared to work. Removing that fallback in 0.8.0 exposed the real breakage, and it was reported to you as a deliberate narrowing to "apps Accessibility can read". That description was wrong. The read now asks the frontmost application's own element, which answers in 31 to 53 ms and returns the selection.
+
+  **Two things this brings back that 0.8.0 said were gone.** Text fields in a browser work — a Gmail draft in Chrome reads cleanly — and that covers Slack in a browser tab too. And the clipboard-restore check on the paste path went through the same broken call, so it had been failing closed and leaving every dictation on your clipboard; it now answers for real.
+
+  **What genuinely does not work**, measured rather than assumed: Monaco-based editors (VS Code, Cursor) answer promptly to say they publish no focused element at all, because they gate accessibility behind screen-reader detection. And there is still no implementation off macOS, where the Settings toggle stays disabled. `AXManualAccessibility`, the documented way to switch Chromium's accessibility tree on, turned out to be neither supported by Chrome nor necessary.
+
+  The `Cmd+C` fallback stays removed. Its own defect is real and unrelated: it read any clipboard change as a selection, and VS Code copies the whole current line when nothing is selected.
+
 ## [0.8.1] - 2026-08-24
 
 ### Fixed

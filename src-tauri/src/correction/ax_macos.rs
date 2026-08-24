@@ -8,6 +8,7 @@ use super::{FieldSnapshot, FocusedField};
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXUIElementCreateSystemWide() -> *mut c_void;
+    fn AXUIElementCreateApplication(pid: i32) -> *mut c_void;
     fn AXUIElementCopyAttributeValue(
         element: *mut c_void,
         attribute: *mut c_void,
@@ -92,6 +93,35 @@ unsafe fn cf_string_to_rust(cf: *mut c_void) -> Option<String> {
 
 /// Read `attribute` (a NUL-terminated AX attribute name) off the system-wide
 /// focused element, checking its role first. Returns Some((value, is_secure)) on
+/// The element to ask "what has keyboard focus?".
+///
+/// Prefers the frontmost application's own element over the system-wide one,
+/// because the system-wide element does not answer. Measured on macOS 26
+/// (Darwin 25.5): `AXUIElementCopyAttributeValue(systemWide,
+/// kAXFocusedUIElementAttribute)` returns `kAXErrorCannotComplete` (-25204)
+/// immediately — in 0 ms, so it is a refusal rather than a timeout — for every
+/// app tried, including plain Cocoa ones like TextEdit. Asking the frontmost
+/// app's element the same question succeeds in ~31-35 ms and returns the real
+/// focused element and its selection.
+///
+/// This was the actual reason selected-text editing looked like it "cannot see
+/// browser web content and Electron". It could not see *anything*; native apps
+/// only appeared to work because the Cmd+C fallback was covering for the failed
+/// read until 0.8.0 removed it. Chromium exposes `AXSelectedText` on its text
+/// inputs perfectly well once asked through the right element.
+///
+/// Falls back to the system-wide element when there is no frontmost pid, which
+/// is no worse than what this replaced.
+unsafe fn focus_root() -> *mut c_void {
+    if let Some(pid) = crate::app_detector::frontmost_pid() {
+        let app = AXUIElementCreateApplication(pid);
+        if !app.is_null() {
+            return app;
+        }
+    }
+    AXUIElementCreateSystemWide()
+}
+
 /// success — when `is_secure`, value is empty and the attribute is never read.
 ///
 /// Generic in the attribute because every read shares the same ~40 lines of
@@ -118,8 +148,8 @@ fn read_focused_attribute(attribute: &[u8]) -> Option<(String, bool)> {
             return None;
         }
 
-        let system_wide = AXUIElementCreateSystemWide();
-        if system_wide.is_null() {
+        let root = focus_root();
+        if root.is_null() {
             CFRelease(attr_focused);
             CFRelease(attr_role);
             CFRelease(attr_wanted);
@@ -127,15 +157,15 @@ fn read_focused_attribute(attribute: &[u8]) -> Option<(String, bool)> {
         }
         // Set before the first read, not once at startup: there is no init hook in
         // this module and the call is cheap next to the read it bounds.
-        AXUIElementSetMessagingTimeout(system_wide, AX_MESSAGING_TIMEOUT_SECS);
+        AXUIElementSetMessagingTimeout(root, AX_MESSAGING_TIMEOUT_SECS);
 
         let mut focused: *mut c_void = ptr::null_mut();
-        let err = AXUIElementCopyAttributeValue(system_wide, attr_focused, &mut focused);
+        let err = AXUIElementCopyAttributeValue(root, attr_focused, &mut focused);
         if err != 0 || focused.is_null() {
             CFRelease(attr_focused);
             CFRelease(attr_role);
             CFRelease(attr_wanted);
-            CFRelease(system_wide);
+            CFRelease(root);
             return None;
         }
 
@@ -154,7 +184,7 @@ fn read_focused_attribute(attribute: &[u8]) -> Option<(String, bool)> {
 
         if is_secure {
             CFRelease(focused);
-            CFRelease(system_wide);
+            CFRelease(root);
             CFRelease(attr_focused);
             CFRelease(attr_role);
             CFRelease(attr_wanted);
@@ -172,7 +202,7 @@ fn read_focused_attribute(attribute: &[u8]) -> Option<(String, bool)> {
             CFRelease(value_ref);
         }
         CFRelease(focused);
-        CFRelease(system_wide);
+        CFRelease(root);
         CFRelease(attr_focused);
         CFRelease(attr_role);
         CFRelease(attr_wanted);
@@ -244,19 +274,20 @@ pub fn focused_editable_present() -> bool {
             }
             return false;
         }
-        let system_wide = AXUIElementCreateSystemWide();
-        if system_wide.is_null() {
+        let root = focus_root();
+        if root.is_null() {
             CFRelease(attr_focused);
             CFRelease(attr_role);
             return false;
         }
+        AXUIElementSetMessagingTimeout(root, AX_MESSAGING_TIMEOUT_SECS);
         let mut focused: *mut c_void = ptr::null_mut();
-        let err = AXUIElementCopyAttributeValue(system_wide, attr_focused, &mut focused);
+        let err = AXUIElementCopyAttributeValue(root, attr_focused, &mut focused);
         if err != 0 || focused.is_null() {
             if !focused.is_null() {
                 CFRelease(focused);
             }
-            CFRelease(system_wide);
+            CFRelease(root);
             CFRelease(attr_focused);
             CFRelease(attr_role);
             return false;
@@ -273,7 +304,7 @@ pub fn focused_editable_present() -> bool {
         };
 
         CFRelease(focused);
-        CFRelease(system_wide);
+        CFRelease(root);
         CFRelease(attr_focused);
         CFRelease(attr_role);
 

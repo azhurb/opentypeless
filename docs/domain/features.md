@@ -126,7 +126,8 @@ Platform matrix:
 | | Selection capture | Ring appears |
 |---|---|---|
 | macOS, Accessibility can read the field | Accessibility preflight, no keystroke | At record start |
-| macOS, Accessibility blind (browser web content, Electron) | Not supported — dictation is inserted | No ring |
+| macOS, browser text input (Chrome, Safari) | Accessibility preflight, no keystroke | At record start |
+| macOS, Monaco-based editor (VS Code, Cursor) | Not supported — the app publishes no focused element | No ring |
 | Windows, Linux | Not supported — the toggle is disabled | No ring |
 | Windows / Linux | Ctrl+C fallback | No ring — confirmation tip only |
 

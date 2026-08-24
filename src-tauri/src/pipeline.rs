@@ -569,9 +569,13 @@ impl PipelineHandle {
         // edit is recoverable; silently rewriting text the user did not select is
         // not, so the ambiguous signal is gone rather than merely narrowed.
         //
-        // The cost is real and deliberate: AX cannot see browser web content or
-        // Electron apps, so voice-editing does not work there. `docs/plans/active/
-        // selected-text-in-ax-blind-apps.md` covers the ways to win those back.
+        // The reach of this read was badly misjudged when the fallback was removed.
+        // It is not blind to browsers or Electron: Chromium exposes `AXSelectedText`
+        // on its text inputs, and a Gmail draft in Chrome reads in ~31 ms. What was
+        // actually broken was the element being asked — see `focus_root` in
+        // `correction::ax_macos`. Editors built on Monaco (VS Code, Cursor) really
+        // do publish no focused element, and there is no implementation off macOS;
+        // `docs/plans/active/selected-text-in-ax-blind-apps.md` tracks both.
         //
         // A read-only AX query, so it is safe with the hotkey still held.
         //
