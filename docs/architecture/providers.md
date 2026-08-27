@@ -105,7 +105,7 @@ Diarization and word-level timestamps are deliberately not requested: a dictatio
 
 No detected-language field exists anywhere in the response, so this provider returns `None` and shows no language badge, the same as AssemblyAI.
 
-**Still open:** neither `custom_vocabulary` nor `mode: smart` changed the output on synthetic speech — paired trials produced byte-identical transcripts with and without them. Both are accepted and both are real parameters, so this is a question about effect, not wire shape, and it wants a real microphone recording. Until it is settled, treat both as sent and accepted rather than as working. Details in [`../plans/active/gemini-transcribe.md`](../plans/active/gemini-transcribe.md).
+**Settled, and the answer is that both are inert.** Neither `custom_vocabulary` nor `mode: smart` changes the output, across paired trials on synthetic *and* real microphone audio. The decisive case is a real dictation of spoken digits, which transcribes as `Testing 1 2 3 4 5` in both modes — spaced digits are exactly the "format spoken numbers" job smart mode claims and verbatim does not, so the modes would separate here if they did anything. Whether this is free-tier gating (`service_tier: "standard"`) or not-yet-implemented is indistinguishable from outside, and there is nothing to fix on our side: the request is correct by the API's own validation. **Consequence: keep the polish step on for this provider** — it is doing the work smart mode was supposed to take over. Details and the trial table in [`../plans/active/gemini-transcribe.md`](../plans/active/gemini-transcribe.md).
 
 ### Connection tests and benchmarks
 

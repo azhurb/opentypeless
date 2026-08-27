@@ -455,8 +455,17 @@ mod tests {
         let pcm = match std::env::var("GEMINI_TEST_WAV") {
             Ok(path) if !path.is_empty() => {
                 let bytes = std::fs::read(&path).expect("GEMINI_TEST_WAV must be readable");
-                // Skip the 44-byte canonical WAV header: `send_audio` takes raw PCM.
-                bytes[44..].to_vec()
+                // Locate the `data` chunk rather than assuming the canonical 44-byte
+                // header. `send_audio` takes raw PCM, and a real recording rarely has
+                // a bare header: ffmpeg writes a LIST chunk ahead of `data`, putting
+                // the samples at byte 78. Skipping a fixed 44 feeds 34 bytes of
+                // metadata to the API as if it were audio.
+                let pcm_start = bytes
+                    .windows(4)
+                    .position(|w| w == b"data")
+                    .map(|i| i + 8)
+                    .expect("GEMINI_TEST_WAV must be a WAV file with a data chunk");
+                bytes[pcm_start..].to_vec()
             }
             _ => vec![0u8; 32000],
         };
