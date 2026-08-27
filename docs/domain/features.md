@@ -20,8 +20,9 @@ Repo evidence:
 
 Current repo STT provider labels (from `src/lib/constants.ts`):
 
-- Deepgram Nova-3 — present in the dropdown but **not registered in `stt::create_provider`**; selecting it currently falls through to the GLM-ASR default. See [Providers → mismatches](../architecture/providers.md#mismatches-with-the-frontend-list).
+- Deepgram Nova-3
 - AssemblyAI
+- Gemini 3.5 Transcribe
 - GLM-ASR
 - OpenAI Whisper
 - Groq Whisper
@@ -142,7 +143,7 @@ Repo evidence:
 - STT languages live in `AppConfig.stt_languages: Vec<String>` (empty = auto-detect).
 - `src/lib/constants.ts` exposes 20 language options; the Settings UI renders them as multi-select chips (`src/components/Settings/SttPane.tsx`). Selecting zero languages is the canonical "auto" state — there is no `"multi"` sentinel anymore.
 - A one-shot migration in `ConfigManager::load` (`src-tauri/src/storage/mod.rs::migrate_legacy_config`) converts the pre-existing single-value `stt_language` field on disk: `"multi"` and empty become `[]`; any other code becomes `[code]`. After migration the old field is removed.
-- Wire mapping (see [Providers → Language hint mapping rule](../architecture/providers.md#language-hint-mapping-rule)): Whisper-compatible adapters pin a `language=` form field only when exactly one is selected; Deepgram pins via URL or falls back to its native `multi` mode.
+- Wire mapping (see [Providers → Language hint mapping rule](../architecture/providers.md#language-hint-mapping-rule)): Whisper-compatible adapters pin a `language=` form field only when exactly one is selected; Deepgram pins via URL or falls back to its native `multi` mode; Gemini Transcribe is the only provider that puts the whole selection on the wire, as a region-tagged BCP-47 array.
 - Detected language is captured from STT responses and threaded into the polish prompt + history + a `pipeline:timing.detected_language` event (see [Pipeline → Detected language threading](../architecture/pipeline.md#detected-language-threading)).
 - `src-tauri/src/llm/prompt.rs` injects a one-line context clause when detected language is known and lists the user's configured set; both pass through a strict display-name map to avoid prompt injection from wire-supplied values.
 - A rate-limited toast (`src/hooks/useDetectedLanguageNotifier.ts`) tells the user when the STT detected a language not in their set; cooldown is 10 s per language code.
@@ -181,6 +182,7 @@ Repo evidence:
 - Dictionary UI lives under `src/components/Settings/DictionaryPane.tsx`.
 - Dictionary words are loaded before recording in `src-tauri/src/pipeline.rs`.
 - Prompt construction injects sanitized dictionary terms in `src-tauri/src/llm/prompt.rs`.
+- The same words reach the STT step as `SttConfig.custom_vocabulary`, but only `gemini-transcribe` acts on them (recognition biasing, capped at the API's 1,000 terms). For every other provider the dictionary still influences the polish prompt only.
 
 Needs confirmation:
 

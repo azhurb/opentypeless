@@ -45,7 +45,7 @@
 | | OpenTypeless | macOS Dictation | Windows Voice Typing | Whisper Desktop |
 |---|---|---|---|---|
 | AI text polishing | ✅ Multiple LLMs | ❌ | ❌ | ❌ |
-| STT provider choice | ✅ 6+ providers | ❌ Apple only | ❌ Microsoft only | ❌ Whisper only |
+| STT provider choice | ✅ 7+ providers | ❌ Apple only | ❌ Microsoft only | ❌ Whisper only |
 | Works in any app | ✅ | ✅ | ✅ | ❌ Copy-paste |
 | Translation mode | ✅ | ❌ | ❌ | ❌ |
 | Open source | ✅ MIT | ❌ | ❌ | ✅ |
@@ -57,7 +57,7 @@
 
 - 🎙️ Global hotkey recording — hold-to-record or toggle mode
 - 💊 Floating capsule widget that stays on top
-- 🗣️ 6+ STT providers: Deepgram, AssemblyAI, Whisper, Groq, GLM-ASR, SiliconFlow
+- 🗣️ 7+ STT providers: Deepgram, AssemblyAI, Gemini 3.5 Transcribe, Whisper, Groq, GLM-ASR, SiliconFlow
 - 🤖 Text polishing via multiple LLMs: OpenAI, DeepSeek, Claude, Gemini, Ollama, and more
 - ⚡ Live progress — the capsule shows the polish forming as the LLM works, then pastes once it's done
 - ⌨️ Lands in whatever app is focused, via the clipboard plus a synthesized ⌘V / Ctrl+V — split into chunks for terminal CLIs that choke on bulk pastes
@@ -162,7 +162,7 @@ src/                  # React frontend (TypeScript)
 
 src-tauri/src/        # Rust backend
 ├── audio/            # Audio capture via cpal
-├── stt/              # STT providers (Deepgram, AssemblyAI, Whisper-compat)
+├── stt/              # STT providers (Deepgram, AssemblyAI, Gemini, Whisper-compat)
 ├── llm/              # LLM providers (OpenAI-compatible)
 ├── output/           # Clipboard-paste output with per-target chunking
 ├── storage/          # Config (tauri-plugin-store) + history/dictionary (SQLite)

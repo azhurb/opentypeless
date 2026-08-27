@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
+## [Unreleased]
+
+### Added
+- **Gemini 3.5 Transcribe is available as a speech provider, and it is the first one that uses your dictionary to hear you correctly rather than only to fix the text afterwards.** Pick *Gemini 3.5 Transcribe* under Settings → Speech Recognition and paste a Google AI Studio key. Your dictionary words are sent with the audio as recognition hints, so a product name or an acronym has a chance of being transcribed right the first time instead of being repaired by the polish step - which could only ever guess from what the speech model already got wrong. Up to 1,000 terms are sent; a longer dictionary is trimmed rather than rejected.
+
+  **Two smaller things come with it.** If you have marked several languages you expect to speak, this is the only provider that receives all of them - the Whisper-based ones accept at most one hint and fall back to auto-detect, and AssemblyAI ignores the setting entirely. And it does its own cleanup of fillers, false starts and spoken dates and numbers before the text ever reaches the polish step.
+
+  Pricing at the time of writing is roughly half a cent per minute of audio, with a free tier. Testing the key costs nothing: the Test button reads the model rather than transcribing, the same as the OpenAI Whisper probe, so it also tells you whether your key actually has access to the transcription model.
+
+  **This has not been run against a live key yet.** The request was built from Google's published documentation, and a few details of it - the inline-audio field names, the WAV content type, where the transcript sits in the response - are inference from adjacent pages rather than copied from a worked example. If any of them is wrong the provider returns an API error rather than bad text, so you will know immediately; the open list is in [`docs/plans/active/gemini-transcribe.md`](docs/plans/active/gemini-transcribe.md). The real-time variant (`gemini-3.5-transcribe-live`) is not implemented - this one buffers your audio and sends it in a single request when you release the hotkey, the same as the Whisper-based providers.
+
 ## [0.8.2] - 2026-08-24
 
 ### Fixed

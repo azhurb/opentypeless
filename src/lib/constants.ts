@@ -10,6 +10,7 @@ export const APP_LICENSE_URL = 'https://github.com/azhurb/opentypeless/blob/main
 export const STT_PROVIDERS = [
   { value: 'deepgram', label: 'Deepgram Nova-3' },
   { value: 'assemblyai', label: 'AssemblyAI' },
+  { value: 'gemini-transcribe', label: 'Gemini 3.5 Transcribe' },
   { value: 'glm-asr', label: 'GLM-ASR (智谱)' },
   { value: 'openai-whisper', label: 'OpenAI Whisper' },
   { value: 'groq-whisper', label: 'Groq Whisper' },
