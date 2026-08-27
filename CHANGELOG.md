@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 This repository is a fork of [Tover0314/opentypeless](https://github.com/tover0314-w/opentypeless). The entry for `0.1.0` describes the upstream baseline; `0.2.0` is the fork's first release, marking the BYOK-only direction and the changes listed below.
 
+## [Unreleased]
+
+### Added
+- **Gemini 3.5 Transcribe is available as a speech provider.** Pick it under Settings → Speech Recognition and paste a Google AI Studio key. It transcribes a whole dictation in one request when you release the hotkey, the same way the Whisper-based providers do, and it has been checked end to end against the live API rather than only against the documentation. Pricing at the time of writing is roughly half a cent per minute of audio, with a free tier. Pressing **Test** costs nothing: it reads the model instead of transcribing, the same as the OpenAI Whisper probe, so it also tells you whether your key actually has access to the transcription model rather than only that the key is valid.
+
+  **Two things it is sent that the other providers are not, both of which currently appear to do nothing.** Your dictionary words go along with the audio as recognition hints, and the provider is asked to clean up fillers and false starts before the text reaches the polish step. Google's API accepts both, and they are definitely the right parameters, since it rejects a misspelled one outright. But on synthetic test speech neither changed the result: three paired runs with and without the dictionary produced byte-identical transcripts, and two paired runs of the cleanup mode against the literal mode did the same, fillers included. It may behave differently on a real microphone, it may be inactive on the free tier, or it may not be switched on yet at Google's end. Until that is understood, treat both as sent rather than as working, and keep the polish step on. There is nothing to configure either way, and neither costs you anything extra.
+
+  **Two smaller limits worth knowing.** Dictation history shows no detected language for this provider, because the response does not report one; the same is already true of AssemblyAI. And this is the batch model, not the real-time one, so there is no live partial text while you speak.
+
 ## [0.8.2] - 2026-08-24
 
 ### Fixed

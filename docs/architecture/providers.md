@@ -55,6 +55,8 @@ fn name(&self) -> &str;
 
 `DisconnectResult` is `Option<(String, Option<String>)>` — file-based providers return `(text, detected_language)` on close. Streaming providers return `Ok(None)` and emit `Final` instead.
 
+`SttConfig.custom_vocabulary` carries the user's dictionary words (the same list the polish prompt gets, cloned in `pipeline.rs` before the polish path `take()`s the preloaded copy). Only `gemini-transcribe` reads it today; every other provider ignores it, the way the Whisper-compatible ones ignore `smart_format`. Deepgram keyterms and AssemblyAI word boost are the per-provider equivalents and are not wired — see [`../plans/active/gemini-transcribe.md`](../plans/active/gemini-transcribe.md).
+
 ### Language hint mapping rule
 
 `SttConfig.languages: Vec<String>` carries the user's selection (empty = auto-detect). Adapters map it to each provider's wire format:
@@ -62,6 +64,7 @@ fn name(&self) -> &str;
 - **Whisper-compatible** (`openai-whisper`, `groq-whisper`, `glm-asr`, `siliconflow`): the form field `language=<code>` is sent **only when `languages.len() == 1`**. Both 0 and >1 omit the field and let Whisper auto-detect — the Whisper API doesn't accept a set. All Whisper-compat requests also include `response_format=verbose_json` so the response carries the detected `language`.
 - **Deepgram**: URL `?language=<code>` when `languages.len() == 1`; otherwise `?language=multi` (Deepgram's native multi-language mode handles both empty-set and many-set).
 - **AssemblyAI**: the streaming WebSocket URL does not accept a language hint today; the field is silently ignored. Follow-up.
+- **Gemini Transcribe**: the only provider that takes the selection as a *set*. `language_codes` is a JSON array and the model handles code-switching between the entries, so a multi-language selection reaches the wire intact instead of degrading to auto-detect. The API wants region-tagged BCP-47 (`en-US`, `es-ES`) while `SttConfig.languages` holds ISO-639-1, so `gemini::bcp47` maps each code and picks a region per language; an unmappable code is **dropped** rather than passed through, because an unknown tag risks a 400 that loses the utterance while auto-detect still produces text. An empty set omits the field.
 
 The multi-element selection in the UI is primarily a hint to the **polish prompt** (which receives the full `user_languages` set via `PolishRequest`) rather than the STT. The pipeline-level polish therefore biases toward the user's languages even when the wire-level STT request can't carry them.
 
@@ -75,6 +78,7 @@ Match arms currently registered in `stt::create_provider`:
 
 - `deepgram`
 - `assemblyai`
+- `gemini-transcribe`
 - `glm-asr`
 - `openai-whisper`
 - `groq-whisper`
@@ -83,11 +87,31 @@ Match arms currently registered in `stt::create_provider`:
 
 `glm-asr`, `openai-whisper`, `groq-whisper`, and `siliconflow` share `WhisperCompatProvider` with different endpoints, models, and extra fields.
 
+### Gemini Transcribe (batch)
+
+`gemini-transcribe` runs `gemini-3.5-transcribe` over the Interactions API (`POST https://generativelanguage.googleapis.com/v1beta/interactions`, key in an `x-goog-api-key` header). It is file-based in the same sense as the Whisper-compatible providers — audio buffers for the length of the dictation and goes out as one request in `disconnect` — but it is bespoke rather than a `WhisperCompatConfig` row, because the request is JSON with a nested `generation_config.transcription_config` rather than a multipart form.
+
+**Audio rides inline as base64, not through the Files API.** The transcription guide leads with an upload-then-reference sequence; that would put a second round-trip between the user releasing the hotkey and text appearing, which is the worst place in the app to add one. The Interactions API accepts up to 100 MB of inline payload, and base64 inflates by 4/3, so the existing 24 MB PCM cap (~12.5 min) produces a ~32 MB body and stays comfortably inside. The WAV itself is built by `WhisperCompatProvider::build_wav`, reused rather than duplicated.
+
+**Two parameters this provider has that none of the others do**, both sent and both accepted, neither yet shown to change anything (see below). `custom_vocabulary` is intended to bias recognition toward the user's dictionary, truncated at the API's 1,000-term ceiling — the docs advise ~100, but trimming someone's dictionary that far silently drops words they added on purpose, and the documented failure past that point is weaker biasing rather than an error. `mode: {"type": "smart"}`, mapped from `SttConfig.smart_format`, is documented to remove fillers and false starts and format spoken lists, dates and numbers at the STT step, overlapping with the mechanical half of LLM polish.
+
+Diarization and word-level timestamps are deliberately not requested: a dictation is one speaker, nothing downstream reads timestamps, and enabling either halves the accepted audio length from 60 to 30 minutes.
+
+**Verified against the live API on 2026-08-27**, including the end-to-end Rust path (`stt::gemini::tests::live_round_trips_against_the_real_api`, `#[ignore]`d since it needs a key and a network). Three findings are load-bearing:
+
+- **The transcript is not where the docs say it is.** There is no `output_text` at the REST top level — the response carries `id`, `status`, `usage`, `created`, `updated`, `service_tier`, `steps`, `object`, `model`. `interaction.output_text` is the SDK accessor. `parse_response` therefore reads `steps[].content[].text`, filtered to `type == "text"`; the `output_text` check stays first purely as forward compatibility. Collecting every `text` regardless of type is how a reasoning scratchpad reaches the user's document, which is the 0.8.0 `<think>` bug in a new place, and `usage` does count `total_thought_tokens` separately.
+- **Unknown parameters are rejected with a 400**, so `custom_vocabulary`, `language_codes` and `mode` returning 200 proves they are recognized rather than swallowed. `mode.type` is enum-validated to exactly `smart` and `verbatim`.
+- **`language_codes` and `mime_type` are *not* validated** — a bare `en`, a gibberish `xx-YY` and `audio/banana` all return 200. So the `bcp47()` mapping keeps the request to the documented shape; it is not protecting against a rejection, and the comment in the code says so.
+
+No detected-language field exists anywhere in the response, so this provider returns `None` and shows no language badge, the same as AssemblyAI.
+
+**Still open:** neither `custom_vocabulary` nor `mode: smart` changed the output on synthetic speech — paired trials produced byte-identical transcripts with and without them. Both are accepted and both are real parameters, so this is a question about effect, not wire shape, and it wants a real microphone recording. Until it is settled, treat both as sent and accepted rather than as working. Details in [`../plans/active/gemini-transcribe.md`](../plans/active/gemini-transcribe.md).
+
 ### Connection tests and benchmarks
 
 `test_stt_connection` and `bench_stt_connection` in `lib.rs` probe a key without running a dictation. The key comes either from the command's `api_key: Option<String>` (a candidate the user typed but has not saved) or, when that is `None`, from the credential vault — see [Storage → Credentials](storage.md#credentials-os-credential-vault). Probing never persists the candidate. Deepgram and AssemblyAI use a cheap authenticated `GET`. The Whisper-compatible providers upload a 0.1 s silent WAV, sharing endpoint/model/extra-field resolution through `whisper_compat_test_target`.
 
-`openai-whisper` is the exception: OpenAI bills every `/audio/transcriptions` call, so the upload probe charged the user to verify their own key — a real annoyance in a BYOK app. It now reads `GET /v1/models/whisper-1` instead, which proves the key is accepted for free. The other Whisper-compatible providers keep the upload probe. One consequence worth knowing: the benchmark number shown for `openai-whisper` is now a model-read round-trip rather than a transcription round-trip, so it is not comparable with the other Whisper-compatible providers' figures. **Needs confirmation**: whether GLM-ASR, Groq and SiliconFlow expose an equivalent per-model endpoint, and whether their transcription calls are billed the same way — if both hold, they should move to the same probe.
+`gemini-transcribe` and `openai-whisper` are the exceptions, for the same reason. OpenAI bills every `/audio/transcriptions` call, so the upload probe charged the user to verify their own key — a real annoyance in a BYOK app. It now reads `GET /v1/models/whisper-1` instead, which proves the key is accepted for free. `gemini-transcribe` reads `GET /v1beta/models/gemini-3.5-transcribe` for the same reason, and that probe also catches a case the upload probe cannot: a key that is valid but has no access to the transcription model. The other Whisper-compatible providers keep the upload probe. One consequence worth knowing: the benchmark number shown for `openai-whisper` is now a model-read round-trip rather than a transcription round-trip, so it is not comparable with the other Whisper-compatible providers' figures. **Needs confirmation**: whether GLM-ASR, Groq and SiliconFlow expose an equivalent per-model endpoint, and whether their transcription calls are billed the same way — if both hold, they should move to the same probe.
 
 ### Draining the close of a streaming session
 

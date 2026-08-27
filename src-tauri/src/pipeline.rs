@@ -634,6 +634,10 @@ impl PipelineHandle {
             .state::<std::sync::Arc<storage::DictionaryStore>>()
             .words()
             .await;
+        // The same list feeds STT vocabulary biasing and the polish prompt, so it
+        // is cloned rather than moved: the polish path `take()`s the preloaded
+        // copy much later, long after the STT config below has been built.
+        let stt_vocabulary = dict_words.clone();
         *self
             .preloaded_dictionary
             .lock()
@@ -690,6 +694,7 @@ impl PipelineHandle {
             languages: config_data.stt_languages.clone(),
             smart_format: true,
             sample_rate: 16000,
+            custom_vocabulary: stt_vocabulary,
         };
 
         let mut provider =
@@ -1308,6 +1313,7 @@ impl PipelineHandle {
             "siliconflow" => "https://api.siliconflow.cn/v1/audio/transcriptions".to_string(),
             "deepgram" => "https://api.deepgram.com/v1/listen".to_string(),
             "assemblyai" => "https://api.assemblyai.com/v2/transcript".to_string(),
+            "gemini-transcribe" => crate::stt::gemini::ENDPOINT.to_string(),
             _ => {
                 tracing::debug!(
                     "Unknown STT provider '{}', skipping pre-warm",

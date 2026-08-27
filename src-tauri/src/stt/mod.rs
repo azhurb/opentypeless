@@ -1,5 +1,6 @@
 pub mod assemblyai;
 pub mod deepgram;
+pub mod gemini;
 pub mod whisper_compat;
 
 use std::time::Duration;
@@ -98,6 +99,10 @@ pub struct SttConfig {
     pub languages: Vec<String>,
     pub smart_format: bool,
     pub sample_rate: u32,
+    /// Terms from the user's dictionary, for providers that accept vocabulary
+    /// biasing. Only `gemini-transcribe` reads it today; the others ignore it,
+    /// the same way the Whisper-compatible ones ignore `smart_format`.
+    pub custom_vocabulary: Vec<String>,
 }
 
 impl Default for SttConfig {
@@ -107,6 +112,7 @@ impl Default for SttConfig {
             languages: Vec::new(),
             smart_format: true,
             sample_rate: 16000,
+            custom_vocabulary: Vec::new(),
         }
     }
 }
@@ -152,6 +158,7 @@ pub fn create_provider(provider_name: &str, client: reqwest::Client) -> Box<dyn 
     match provider_name {
         "deepgram" => Box::new(deepgram::DeepgramProvider::new()),
         "assemblyai" => Box::new(assemblyai::AssemblyAiProvider::new()),
+        "gemini-transcribe" => Box::new(gemini::GeminiTranscribeProvider::new(client.clone())),
         "glm-asr" => make(WhisperCompatConfig {
             provider_name: "GLM-ASR",
             endpoint: "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions",
