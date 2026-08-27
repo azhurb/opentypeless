@@ -35,9 +35,12 @@ const MAX_VOCABULARY_TERMS: usize = 1000;
 /// needs `en-GB` spelling cannot express it today — see the follow-up in
 /// `docs/plans/active/gemini-transcribe.md`.
 ///
-/// An unrecognized code returns `None` and is dropped from the request rather
-/// than passed through. Passing an unknown tag risks a 400 that loses the whole
-/// utterance; dropping it degrades to auto-detect, which still produces text.
+/// An unrecognized code returns `None` and is dropped from the request. This is
+/// tidiness, not safety: the API was measured on 2026-08-27 to accept a bare
+/// `en` and even a gibberish `xx-YY` with a 200, so an unmapped code passed
+/// through would be ignored rather than rejected. Dropping it keeps the request
+/// to the documented shape and makes the mapping table the single place that
+/// decides what we claim to support.
 fn bcp47(code: &str) -> Option<&'static str> {
     Some(match code.trim().to_lowercase().as_str() {
         "zh" => "zh-CN",
@@ -118,11 +121,19 @@ fn build_request_body(
 
 /// Pull the transcript out of an Interactions API response.
 ///
-/// `output_text` is the documented home for the complete transcript. The
-/// fallback walks `steps[].content[].text` because that is where the response
-/// carries per-segment content, and a transcript that arrived only in the
-/// segments would otherwise read as silence — an empty result the user cannot
-/// distinguish from a failed dictation.
+/// **`steps[].content[].text` is where the transcript actually is.** The docs
+/// name `interaction.output_text`, but that is the SDK object's accessor, not a
+/// REST field: a live response (2026-08-27) has top-level keys `id`, `status`,
+/// `usage`, `created`, `updated`, `service_tier`, `steps`, `object`, `model`
+/// and no `output_text` at all. It is still checked first, so a future REST
+/// version that does expose it wins without a code change.
+///
+/// Content items are typed and only `text` is collected. The response carries
+/// `{"type": "text", ...}` inside a `{"type": "model_output"}` step today, and
+/// `usage` counts `total_thought_tokens` and `total_tool_use_tokens` separately
+/// — so a step type that is not model output is a real possibility. Collecting
+/// every `text` field regardless of type is how a reasoning scratchpad ends up
+/// typed into the user's document, which is exactly the 0.8.0 `<think>` bug.
 fn parse_response(body: &str) -> Result<String> {
     let v: serde_json::Value = serde_json::from_str(body)?;
 
@@ -138,6 +149,9 @@ fn parse_response(body: &str) -> Result<String> {
         for step in steps {
             if let Some(content) = step["content"].as_array() {
                 for item in content {
+                    if item["type"] != "text" {
+                        continue;
+                    }
                     if let Some(text) = item["text"].as_str() {
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
@@ -253,8 +267,8 @@ mod tests {
         assert_eq!(
             transcription_config(&v)["language_codes"],
             serde_json::json!(["en-US"]),
-            "an unmappable code is dropped, not passed through: a 400 would lose the utterance \
-             while auto-detect still produces text"
+            "an unmappable code is dropped so the request keeps the documented shape; the API \
+             ignores unknown tags rather than rejecting them, so this is tidiness, not safety"
         );
     }
 
@@ -334,17 +348,58 @@ mod tests {
     }
 
     #[test]
-    fn parse_response_falls_back_to_step_content() {
+    fn parse_response_reads_the_shape_the_live_api_returns() {
+        // Trimmed from a real 2026-08-27 response: no `output_text` anywhere,
+        // transcript inside a typed content item of a `model_output` step.
         let body = r#"{
+            "id": "v1_abc",
+            "status": "completed",
+            "object": "interaction",
+            "model": "gemini-3.5-transcribe",
             "steps": [
-                {"content": [{"text": "Hello"}, {"text": "world"}]},
-                {"content": [{"text": "again"}]}
+                {"type": "model_output", "content": [
+                    {"type": "text", "text": "Please push the changes to the main branch."}
+                ]}
             ]
         }"#;
         assert_eq!(
             parse_response(body).unwrap(),
-            "Hello world again",
-            "a transcript that arrived only in the segments must not read as silence"
+            "Please push the changes to the main branch.",
+            "this is the only path that fires against the live API; if it breaks, every \
+             dictation reads as silence"
+        );
+    }
+
+    #[test]
+    fn parse_response_joins_multiple_content_items() {
+        let body = r#"{
+            "steps": [
+                {"type": "model_output", "content": [
+                    {"type": "text", "text": "Hello"}, {"type": "text", "text": "world"}
+                ]},
+                {"type": "model_output", "content": [{"type": "text", "text": "again"}]}
+            ]
+        }"#;
+        assert_eq!(parse_response(body).unwrap(), "Hello world again");
+    }
+
+    #[test]
+    fn parse_response_skips_content_that_is_not_text() {
+        let body = r#"{
+            "steps": [
+                {"type": "thought", "content": [
+                    {"type": "thinking", "text": "The user probably means the main branch."}
+                ]},
+                {"type": "model_output", "content": [
+                    {"type": "text", "text": "Push to main."}
+                ]}
+            ]
+        }"#;
+        assert_eq!(
+            parse_response(body).unwrap(),
+            "Push to main.",
+            "collecting every text field regardless of type is how a reasoning scratchpad gets \
+             typed into the user's document — the 0.8.0 <think> bug in a new place"
         );
     }
 
@@ -352,7 +407,7 @@ mod tests {
     fn parse_response_prefers_output_text_over_steps() {
         let body = r#"{
             "output_text": "the whole thing",
-            "steps": [{"content": [{"text": "a fragment"}]}]
+            "steps": [{"type": "model_output", "content": [{"type": "text", "text": "a fragment"}]}]
         }"#;
         assert_eq!(parse_response(body).unwrap(), "the whole thing");
     }
@@ -370,6 +425,59 @@ mod tests {
     #[test]
     fn parse_response_errors_on_malformed_json() {
         assert!(parse_response("not json").is_err());
+    }
+
+    /// End-to-end against the live API. Ignored by default: it needs a key and a
+    /// network, so it can never run in CI (see `docs/references/commands.md` —
+    /// CI has no secrets and this fork's workflows are manual anyway).
+    ///
+    /// This is the only check that exercises the real request path rather than a
+    /// hand-copied approximation of it, so run it after touching the wire shape:
+    ///
+    /// ```text
+    /// GEMINI_API_KEY=... cargo test --manifest-path src-tauri/Cargo.toml \
+    ///     --lib stt::gemini::tests::live -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "requires GEMINI_API_KEY and network"]
+    async fn live_round_trips_against_the_real_api() {
+        let api_key = match std::env::var("GEMINI_API_KEY") {
+            Ok(k) if !k.is_empty() => k,
+            _ => panic!("set GEMINI_API_KEY to run this test"),
+        };
+
+        // Default payload is a second of silence: enough to prove the request is
+        // accepted and the response parses, and it ships in the repo as nothing
+        // at all. Point `GEMINI_TEST_WAV` at a 16 kHz 16-bit mono WAV to run the
+        // same path over real speech and see the transcript on stdout — that is
+        // what exercises the `steps[].content[].text` walk, which silence never
+        // reaches.
+        let pcm = match std::env::var("GEMINI_TEST_WAV") {
+            Ok(path) if !path.is_empty() => {
+                let bytes = std::fs::read(&path).expect("GEMINI_TEST_WAV must be readable");
+                // Skip the 44-byte canonical WAV header: `send_audio` takes raw PCM.
+                bytes[44..].to_vec()
+            }
+            _ => vec![0u8; 32000],
+        };
+        let mut provider = GeminiTranscribeProvider::new(reqwest::Client::new());
+        let config = SttConfig {
+            api_key,
+            languages: vec!["en".to_string()],
+            smart_format: true,
+            sample_rate: 16000,
+            custom_vocabulary: vec!["OpenTypeless".to_string()],
+        };
+
+        provider.connect(&config).await.expect("connect");
+        provider.send_audio(&pcm).await.expect("send_audio");
+        let result = provider
+            .disconnect()
+            .await
+            .expect("the API must accept our request shape");
+
+        // Silence legitimately transcribes to nothing, which arrives as `None`.
+        println!("live result: {result:?}");
     }
 }
 
