@@ -151,6 +151,55 @@ pub trait SttProvider: Send + Sync {
     fn name(&self) -> &str;
 }
 
+#[cfg(test)]
+mod factory_tests {
+    use super::*;
+
+    /// Every provider ID the Settings dropdown offers, paired with the provider
+    /// `create_provider` must hand back for it.
+    ///
+    /// This list is the frontend's `STT_PROVIDERS` in `src/lib/constants.ts`.
+    /// The two must agree, and nothing in the build enforces that, which is not
+    /// a hypothetical: `deepgram` sat in the dropdown from the initial commit
+    /// with no arm in this factory, so choosing it silently fell through to the
+    /// GLM-ASR default and authenticated a GLM-ASR request with a Deepgram key.
+    /// That went unnoticed for months because the symptom is a confusing auth
+    /// error rather than a crash. A missing arm now fails here instead.
+    const DROPDOWN_IDS: &[(&str, &str)] = &[
+        ("deepgram", "Deepgram Nova-3"),
+        ("assemblyai", "AssemblyAI"),
+        ("gemini-transcribe", "Gemini Transcribe"),
+        ("glm-asr", "GLM-ASR"),
+        ("openai-whisper", "OpenAI Whisper"),
+        ("groq-whisper", "Groq Whisper"),
+        ("siliconflow", "SiliconFlow"),
+    ];
+
+    #[test]
+    fn every_dropdown_id_builds_its_own_provider() {
+        for (id, expected) in DROPDOWN_IDS {
+            let provider = create_provider(id, reqwest::Client::new());
+            assert_eq!(
+                provider.name(),
+                *expected,
+                "STT id `{id}` built `{}` instead of `{expected}`. If this id was just added to \
+                 src/lib/constants.ts, it also needs an arm in create_provider — without one it \
+                 falls through to the GLM-ASR default and sends this provider's key to Zhipu.",
+                provider.name()
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_id_falls_back_to_the_documented_default() {
+        // The fallback is deliberate, so it is pinned rather than left implicit:
+        // a stored config from a future version, or a hand-edited settings file,
+        // has to land somewhere predictable.
+        let provider = create_provider("not-a-provider", reqwest::Client::new());
+        assert_eq!(provider.name(), "GLM-ASR");
+    }
+}
+
 pub fn create_provider(provider_name: &str, client: reqwest::Client) -> Box<dyn SttProvider> {
     let make = |cfg: WhisperCompatConfig| -> Box<dyn SttProvider> {
         Box::new(WhisperCompatProvider::new(cfg, client.clone()))
