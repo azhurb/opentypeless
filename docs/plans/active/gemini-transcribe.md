@@ -38,27 +38,33 @@ GEMINI_API_KEY=... GEMINI_TEST_WAV=/path/to/16k-mono.wav \
 - **`mime_type` is not validated either** (`audio/banana` returns 200), so the format is sniffed
   and the MIME we send is not load-bearing.
 
-## Open: the two differentiating features had no measurable effect
+## Settled: the two differentiating features are inert
 
-Both are accepted and both are real parameters, but neither changed the output on synthetic
-speech. This is the main thing left to settle, and it decides how the feature should be
-described to users.
+Both are accepted, both are provably real parameters (the API 400s a misspelled one), and
+neither changes the output. Tested on two independent samples, synthetic and real:
 
-- **`custom_vocabulary`**: three paired trials, everything else held fixed, produced
-  byte-identical transcripts with and without the terms. "Akeneo" came back as "Akenia" and
-  "OpenTypeless" as "open typeless" in every run, including the ones that listed both terms.
-- **`mode: smart`**: two paired trials against `verbatim` on deliberately disfluent speech
-  ("So um, I think we should uh…") produced byte-identical transcripts. Fillers were retained
-  in both; the spoken "twenty three point five percent" became "23.5%" in both, so that
-  formatting is not attributable to smart mode.
+| Parameter | Sample | Paired trials | Result |
+| --- | --- | --- | --- |
+| `custom_vocabulary` on/off | `say`-synthesized | 3 | byte-identical |
+| `custom_vocabulary` on/off | real microphone | 2 | byte-identical |
+| `mode: smart` vs `verbatim` | `say`-synthesized, disfluent | 2 | byte-identical, fillers retained in both |
+| `mode: smart` vs `verbatim` | real microphone, spoken digits | 3 | byte-identical |
 
-Candidate explanations, none tested: the audio was `say`-synthesized and may be too canonical
-for biasing to have anything to correct; the features may be inactive on the free tier
-(responses report `service_tier: "standard"`); or they may be accepted-but-not-yet-implemented
-on this surface. **The next step is a real microphone recording**, not more synthetic samples.
+The real-microphone case is the decisive one, because it puts smart mode against its own
+documented job. A dictation of spoken digits transcribes as `Testing 1 2 3 4 5` in **both**
+modes: spaced digits, exactly the "format spoken numbers into clean text" that smart mode
+claims and verbatim does not. If the modes did anything, this sample would separate them.
 
-Until that is settled, the vocabulary and smart-mode benefits should be described as sent and
-accepted, not as working.
+The earlier synthetic result was therefore not an artifact of TTS audio being too canonical.
+
+What is still unknown: whether these are inactive on the free tier (responses report
+`service_tier: "standard"`) or not yet implemented on this API surface. Both would look
+identical from here. Re-test if Google announces a change; there is nothing to fix on our side,
+since the request is correct by the API's own validation.
+
+**Consequence for users:** the polish step stays on for this provider. It is doing the filler
+removal and formatting work that smart mode was supposed to take over, and there is currently no
+latency or quality argument for skipping it.
 
 ## Deferred
 
@@ -68,7 +74,8 @@ accepted, not as working.
   measures badly against the streaming providers.
 - **Vocabulary biasing for the other providers.** `SttConfig.custom_vocabulary` now reaches every
   provider and only this one reads it. Deepgram keyterms and AssemblyAI word boost are the
-  equivalents. Worth wiring only once the effect above is understood.
+  equivalents, and unlike this provider's version they may actually do something — worth wiring
+  on their own merits rather than waiting on the question above, which is settled.
 - **Regional language variants.** Settings offers bare ISO-639-1 codes only, so `en-GB` spelling
   or `pt-PT` cannot be asked for. Exposing variants is a `LANGUAGES` change that affects every
   provider's mapping.
