@@ -17,6 +17,8 @@ This repository is a fork of [Tover0314/opentypeless](https://github.com/tover03
 
   So the polish step stays on for this provider, and does the tidying itself. Nothing here is configurable and none of it costs you anything extra; if Google switches these on later, they start working with no change on our side.
 
+  **It costs about three and a half seconds, whatever you said.** Measured over eleven real dictations: the request takes 3.0 to 4.1 seconds and barely moves with the length of the audio, so 2 seconds of speech costs 3.2 seconds and 15 seconds of speech costs 3.8. That is a fixed price per dictation rather than a rate, which makes it a poor fit for short bursts and unusually good for long ones. If you mostly dictate a sentence at a time, you will feel it.
+
   **Two smaller limits worth knowing.** Dictation history shows no detected language for this provider, because the response does not report one; the same is already true of AssemblyAI. And this is the batch model, not the real-time one, so there is no live partial text while you speak.
 
 ## [0.8.2] - 2026-08-24

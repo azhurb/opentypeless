@@ -66,6 +66,34 @@ since the request is correct by the API's own validation.
 removal and formatting work that smart mode was supposed to take over, and there is currently no
 latency or quality argument for skipping it.
 
+## Latency: a flat cost per dictation
+
+Measured 2026-08-28 from eleven real dictations through the app (log line pairs
+`Gemini Transcribe: sending Xs of audio` to `Gemini Transcribe transcription: N chars`):
+
+| Audio length | API round-trip |
+| --- | --- |
+| 2.2 s | 3.15 s |
+| 2.2 s | 3.73 s |
+| 3.1 s | 3.06 s |
+| 6.7 s | 3.51 s |
+| 9.1 s | 3.00 s |
+| 9.3 s | 4.14 s |
+| 15.1 s | 3.84 s |
+
+The round-trip is essentially independent of how much audio is sent: a seven-fold increase in
+audio length costs about 20% more time. This is fixed overhead, not throughput. The pipeline's
+whole `stop()` ran 2.8 to 4.5 s, of which the STT step is nearly all.
+
+The practical consequence is that this provider is a poor fit for the short-burst dictation the
+app is built around, and unusually good for long passages. A per-provider latency comparison
+against Groq Whisper on the same machine has not been done yet and is the obvious next
+measurement, since that is the provider most users here are switching from.
+
+**Needs confirmation**: whether the flat cost is model warm-up, the inline-base64 upload, or
+queueing. The upload is the cheapest to rule out, since request size does scale with audio length
+and the timings do not.
+
 ## Deferred
 
 - **`gemini-3.5-transcribe-live`.** The streaming counterpart over the Live API, in the shape of
