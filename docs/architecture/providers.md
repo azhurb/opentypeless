@@ -154,7 +154,7 @@ Frontend LLM provider IDs (`src/stores/appStore.ts`): `zhipu`, `deepseek`, `sili
 
 When adding a provider, update all of:
 
-- The factory in `src-tauri/src/stt/mod.rs` or `src-tauri/src/llm/mod.rs`.
+- The factory in `src-tauri/src/stt/mod.rs` or `src-tauri/src/llm/mod.rs`. For STT, add the id to `stt::factory_tests::DROPDOWN_IDS` in the same file: that test builds every dropdown id and asserts which provider comes back, so a new id with no arm fails there instead of silently falling through to the GLM-ASR default and sending the wrong provider's key to Zhipu.
 - The frontend IDs in `src/stores/appStore.ts` and labels in `src/lib/constants.ts`.
 - Connection-test and benchmark match arms in `src-tauri/src/lib.rs`.
 - Pre-warm endpoints in `src-tauri/src/pipeline.rs::pre_warm`.
